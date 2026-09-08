@@ -9,20 +9,11 @@ import java.util.Set;
 /** Shared target keys. The actual resolvers are split by startup priority. */
 final class TargetResolver {
     static final String KEY_FEED = "feed";
-    static final String KEY_SPLASH_DECISION = "splash_decision";
     static final String KEY_SPLASH_BASE = "splash_base";
     static final String KEY_GETTER_TEMPLATE = "getter.entityTemplate";
     static final String KEY_GETTER_ENTITY_ID = "getter.entityId";
     static final String KEY_GETTER_TITLE = "getter.title";
     static final String KEY_GETTER_ENTITY_TYPE = "getter.entityType";
-    static final String KEY_AUTO_COMMENT = "feature.autoComment";
-    static final String KEY_TOPIC_RECOMMEND = "feature.topicRecommend";
-    static final String KEY_RELATED_DATA = "feature.relatedData";
-    static final String KEY_SAME_TOPIC_FEED = "feature.sameTopicFeed";
-    static final String KEY_DETAIL_SPONSOR = "feature.detailSponsor";
-    /** Class-only target: the reply sponsor holder discovered via lazy class loading. */
-    static final String KEY_REPLY_HOLDER = "feature.replyHolder";
-    static final String KEY_REPLY_SELF_DRAW = "feature.replySelfDraw";
 
     /**
      * Historically observed splash-family activity names. Used as a reflection
@@ -33,9 +24,7 @@ final class TargetResolver {
             new HashSet<>(Arrays.asList(
                     "com.coolapk.market.view.splash.SplashActivity",
                     "com.coolapk.market.view.splash.SplashAdActivity",
-                    "com.coolapk.market.view.splash.FullScreenAdActivity",
-                    "com.coolapk.market.view.ad.SplashAdActivity",
-                    "com.coolapk.market.view.ad.FullScreenAdActivity")));
+                    "com.coolapk.market.view.splash.FullScreenAdActivity")));
 
     private TargetResolver() {
     }
@@ -49,10 +38,6 @@ final class TargetResolver {
     static boolean isSplashKey(String key) {
         return key != null
                 && (key.equals(KEY_SPLASH_BASE) || key.startsWith(KEY_SPLASH_BASE + "#"));
-    }
-
-    static boolean isFeatureKey(String key) {
-        return key != null && key.startsWith("feature.");
     }
 
     static String indexedKey(String base, int index) {

@@ -5,11 +5,9 @@ package io.github.yylsping.coolapkpurifier;
  *
  * <p>"Core ready" means the installed hooks already filter ads: splash covered,
  * at least one live feed hook, classifier accessors complete. "Coverage
- * settled" means the late-discovery problem is closed: every feed-shaped
- * method the current scan discovered for the historically known anchor
- * classes carries a live installed hook (see {@link FeedCoverage}), so a
- * staged runtime DEX that appends another known feed path would have been
- * observed already.
+ * settled" means the late-discovery problem is closed: every historically
+ * known feed anchor class contributes a live hook, so a staged runtime DEX
+ * that appends another known feed path would have been observed already.
  *
  * <p>READY requires BOTH layers. A version that genuinely lacks one of the
  * anchor classes can never settle by anchors; it settles only at the 20s
@@ -32,12 +30,25 @@ final class ReadinessPolicy {
 
     /**
      * Core filtering capability. One live feed hook is enough for the hooks to
-     * work, but it proves nothing about coverage — that is the per-anchor
-     * full-harvest snapshot in {@link FeedCoverage}.
+     * work, but it proves nothing about coverage — that is
+     * {@link #isCoverageSettledByAnchors}.
      */
     static boolean isCoreReady(boolean splashReady, int feedHookCount,
                                boolean accessorsComplete) {
         return splashReady && feedHookCount > 0 && accessorsComplete;
+    }
+
+    /**
+     * Fast coverage convergence: both historically known feed anchor classes
+     * (EntityAdHelper and EntityListFragment) each contribute at least one
+     * live installed hook. Strong-fingerprint candidates in additional
+     * classes are installed in the same session they are discovered, so when
+     * both anchors are live the currently visible DEX snapshot has been fully
+     * harvested.
+     */
+    static boolean isCoverageSettledByAnchors(boolean adHelperHooked,
+                                              boolean entityListFragmentHooked) {
+        return adHelperHooked && entityListFragmentHooked;
     }
 
     static SessionOutcome sessionOutcome(boolean coreReady, boolean coverageSettled) {

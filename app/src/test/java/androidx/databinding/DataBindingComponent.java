@@ -1,3 +1,4 @@
 package androidx.databinding;
 
-public interface DataBindingComponent { }
+public interface DataBindingComponent {
+}

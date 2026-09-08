@@ -23,6 +23,14 @@ public final class ReadinessPolicyTest {
     }
 
     @Test
+    public void coverageRequiresBothAnchorClasses() {
+        assertFalse(ReadinessPolicy.isCoverageSettledByAnchors(false, false));
+        assertFalse(ReadinessPolicy.isCoverageSettledByAnchors(true, false));
+        assertFalse(ReadinessPolicy.isCoverageSettledByAnchors(false, true));
+        assertTrue(ReadinessPolicy.isCoverageSettledByAnchors(true, true));
+    }
+
+    @Test
     public void sessionOutcomeMatrix() {
         assertEquals(ReadinessPolicy.SessionOutcome.READY,
                 ReadinessPolicy.sessionOutcome(true, true));
@@ -47,13 +55,13 @@ public final class ReadinessPolicyTest {
         // Session 1: only the EntityAdHelper dex is visible.
         ReadinessPolicy.SessionOutcome session1 = ReadinessPolicy.sessionOutcome(
                 ReadinessPolicy.isCoreReady(splashReady, 2, accessorsComplete),
-                coverageSettled(/*adHelperComplete=*/true, /*fragmentComplete=*/false));
+                ReadinessPolicy.isCoverageSettledByAnchors(true, false));
         assertEquals(ReadinessPolicy.SessionOutcome.RETRY_COVERAGE, session1);
 
         // Session 2: the loader appended the EntityListFragment dex.
         ReadinessPolicy.SessionOutcome session2 = ReadinessPolicy.sessionOutcome(
                 ReadinessPolicy.isCoreReady(splashReady, 4, accessorsComplete),
-                coverageSettled(true, true));
+                ReadinessPolicy.isCoverageSettledByAnchors(true, true));
         assertEquals(ReadinessPolicy.SessionOutcome.READY, session2);
     }
 
@@ -64,7 +72,8 @@ public final class ReadinessPolicyTest {
     @Test
     public void missingAnchorVersionSettlesOnlyAtTheDeadline() {
         assertEquals(ReadinessPolicy.SessionOutcome.RETRY_COVERAGE,
-                ReadinessPolicy.sessionOutcome(true, coverageSettled(true, false)));
+                ReadinessPolicy.sessionOutcome(true,
+                        ReadinessPolicy.isCoverageSettledByAnchors(true, false)));
         assertEquals(BootstrapState.READY,
                 ReadinessPolicy.deadlineTerminalState(true));
         assertEquals(BootstrapState.DEGRADED,
@@ -75,15 +84,6 @@ public final class ReadinessPolicyTest {
     public void deadlineTerminalStateMirrorsCoreCapability() {
         assertEquals(BootstrapState.READY, ReadinessPolicy.deadlineTerminalState(true));
         assertEquals(BootstrapState.DEGRADED, ReadinessPolicy.deadlineTerminalState(false));
-    }
-
-    /** Builds the coverage flag from per-anchor completeness, mirroring the coordinator. */
-    private static boolean coverageSettled(boolean adHelperComplete, boolean fragmentComplete) {
-        return FeedCoverage.settledByAnchors(java.util.Arrays.asList(
-                FeedCoverage.anchor("LadHelper;", adHelperComplete,
-                        java.util.Collections.singletonList("m1"), d -> adHelperComplete),
-                FeedCoverage.anchor("Lfragment;", fragmentComplete,
-                        java.util.Collections.singletonList("m2"), d -> fragmentComplete)));
     }
 
     /**

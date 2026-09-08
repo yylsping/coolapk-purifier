@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">酷安净化</string>
-    <string name="module_description">酷安净化：可配置去除广告、赞助内容与垃圾推荐布局</string>
+    <string name="module_description">酷安去广告：去除启动广告、信息流广告和回复区赞助内容</string>
 </resources>

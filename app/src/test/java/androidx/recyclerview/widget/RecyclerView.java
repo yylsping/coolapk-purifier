@@ -5,6 +5,9 @@ import android.view.View;
 public class RecyclerView {
     public abstract static class ViewHolder {
         public final View itemView;
-        protected ViewHolder(View itemView) { this.itemView = itemView; }
+
+        protected ViewHolder(View itemView) {
+            this.itemView = itemView;
+        }
     }
 }

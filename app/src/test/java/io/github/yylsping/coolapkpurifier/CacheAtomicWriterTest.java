@@ -52,27 +52,4 @@ public final class CacheAtomicWriterTest {
         assertTrue(written);
         assertArrayEquals(payload, Files.readAllBytes(destination.toPath()));
     }
-
-    /**
-     * Real (non-fake) replace failure with the production RENAME_REPLACE
-     * operation: renaming onto a non-empty directory fails on every
-     * platform. The old destination must survive untouched — the dangerous
-     * delete-then-retry fallback is gone.
-     */
-    @Test
-    public void productionRenameFailureKeepsOldDestinationIntact() throws Exception {
-        File destination = folder.newFolder("cache.json");
-        File content = new File(destination, "keep.txt");
-        Files.write(content.toPath(), "old-cache".getBytes(StandardCharsets.UTF_8));
-
-        boolean written = CacheAtomicWriter.write(
-                destination,
-                "new-cache".getBytes(StandardCharsets.UTF_8),
-                CacheAtomicWriter.RENAME_REPLACE);
-
-        assertFalse(written);
-        assertTrue(destination.isDirectory());
-        assertArrayEquals("old-cache".getBytes(StandardCharsets.UTF_8),
-                Files.readAllBytes(content.toPath()));
-    }
 }

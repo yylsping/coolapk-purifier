@@ -226,13 +226,6 @@ final class SettingsHooks {
         title.setTextColor(resolveColor(context, android.R.attr.textColorPrimary, Color.BLACK));
         labels.addView(title);
         boolean supported = !feature.requiresCoolapk15 || coolapkMajor >= 15;
-        if (isAdFiltering(feature)) {
-            TextView summary = new TextView(context);
-            summary.setText("风险提示：开启后可能被检测并触发账号风控，请谨慎使用。");
-            summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            summary.setTextColor(0xffc34a36);
-            labels.addView(summary);
-        }
         if (!supported) {
             TextView summary = new TextView(context);
             summary.setText("仅支持酷安 15.x 及以上");
@@ -264,13 +257,6 @@ final class SettingsHooks {
             }
         });
         return row;
-    }
-
-    private static boolean isAdFiltering(PurifierConfig.Feature feature) {
-        return feature == PurifierConfig.Feature.SPLASH
-                || feature == PurifierConfig.Feature.FEED_SPONSOR
-                || feature == PurifierConfig.Feature.REPLY_SPONSOR
-                || feature == PurifierConfig.Feature.DETAIL_SPONSOR;
     }
 
     private static int dp(Context context, int value) {

@@ -12,12 +12,14 @@ import java.util.Set;
  */
 final class HookedFeedRegistry {
     private final Set<Method> methods = new HashSet<>();
+    private final Set<String> classDescriptors = new HashSet<>();
 
     /** Returns false when the method was already recorded. */
     synchronized boolean add(Method method) {
         if (method == null || !methods.add(method)) {
             return false;
         }
+        classDescriptors.add(DescriptorUtils.classDescriptorOf(method.getDeclaringClass()));
         return true;
     }
 
@@ -29,27 +31,8 @@ final class HookedFeedRegistry {
         return methods.size();
     }
 
-    synchronized int sizeForLoader(ClassLoader loader) {
-        int count = 0;
-        for (Method method : methods) {
-            if (method.getDeclaringClass().getClassLoader() == loader) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     /** True when at least one live hook is declared by the given class descriptor. */
     synchronized boolean hasHookedInClass(String classDescriptor) {
-        if (classDescriptor == null) {
-            return false;
-        }
-        for (Method method : methods) {
-            if (classDescriptor.equals(DescriptorUtils.classDescriptorOf(
-                    method.getDeclaringClass()))) {
-                return true;
-            }
-        }
-        return false;
+        return classDescriptor != null && classDescriptors.contains(classDescriptor);
     }
 }

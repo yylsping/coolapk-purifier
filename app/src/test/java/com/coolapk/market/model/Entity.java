@@ -1,5 +1,17 @@
 package com.coolapk.market.model;
 
-/** Minimal Coolapk entity used by target-verifier tests. */
 public class Entity {
+    private final String template;
+
+    public Entity() {
+        this.template = null;
+    }
+
+    public Entity(String template) {
+        this.template = template;
+    }
+
+    public String getEntityTemplate() {
+        return template;
+    }
 }

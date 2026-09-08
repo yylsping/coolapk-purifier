@@ -1,6 +1,5 @@
 package io.github.yylsping.coolapkpurifier;
 
-import android.content.Context;
 import android.os.SystemClock;
 
 import org.luckypray.dexkit.DexKitBridge;
@@ -8,27 +7,14 @@ import org.luckypray.dexkit.DexKitBridge;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Session-local DexKitBridge lifecycle. The containing
- * {@link ResolutionSessionContext} fixes the runtime ClassLoader and is the
- * sole owner/closer. The internal revision/budget remains defensive, but a
- * normal resolver transaction creates exactly one bridge and never shares it
- * with another generation.
+ * DexKitBridge lifecycle. A bridge is bound to the runtime ClassLoader
+ * generation it was created from. It is created only after runtime DEX ready
+ * and rebuilt at most once when the observed loader generation changes.
  */
 final class DexKitSession {
-    interface NativeLibraryLoader {
-        void ensureLoaded(Context appContext);
-    }
-
-    interface BridgeOpener {
-        DexKitBridge create(ClassLoader loader);
-    }
-
     private final ModuleLog log;
     private final BootstrapTrace trace;
     private final ClassLoader loader;
-    private final Context appContext;
-    private final NativeLibraryLoader nativeLibraryLoader;
-    private final BridgeOpener bridgeOpener;
     private final Object lock = new Object();
     private final AtomicInteger generation = new AtomicInteger();
 
@@ -36,24 +22,11 @@ final class DexKitSession {
     private int bridgeGeneration = -1;
     private int rebuildCount;
     private long loaderIdentity = -1L;
-    private DexKitNativeLoader.LoadFailure nativeFailure;
 
-    DexKitSession(ModuleLog log, BootstrapTrace trace, ClassLoader loader,
-                  Context appContext) {
-        this(log, trace, loader, appContext,
-                context -> DexKitNativeLoader.ensureLoaded(context, log, trace),
-                candidateLoader -> DexKitBridge.create(candidateLoader, true));
-    }
-
-    DexKitSession(ModuleLog log, BootstrapTrace trace, ClassLoader loader,
-                  Context appContext, NativeLibraryLoader nativeLibraryLoader,
-                  BridgeOpener bridgeOpener) {
+    DexKitSession(ModuleLog log, BootstrapTrace trace, ClassLoader loader) {
         this.log = log;
         this.trace = trace;
         this.loader = loader;
-        this.appContext = appContext;
-        this.nativeLibraryLoader = nativeLibraryLoader;
-        this.bridgeOpener = bridgeOpener;
     }
 
     int getGeneration() {
@@ -76,9 +49,6 @@ final class DexKitSession {
 
     DexKitBridge ensureBridge(String trigger) {
         synchronized (lock) {
-            if (nativeFailure != null) {
-                throw nativeFailure;
-            }
             long loaderId = System.identityHashCode(loader);
             if (bridge != null && bridge.isValid()
                     && bridgeGeneration == generation.get()
@@ -99,32 +69,11 @@ final class DexKitSession {
             loaderIdentity = loaderId;
             long start = SystemClock.elapsedRealtime();
             try {
-                if (appContext == null) {
-                    trace("bridgeCreateEnd", "trigger=" + trigger
-                            + " failed=applicationContextUnavailable");
-                    log.info("resolver dexkit bridge creation skipped trigger=" + trigger
-                            + " reason=applicationContextUnavailable");
-                    return null;
-                }
-                try {
-                    nativeLibraryLoader.ensureLoaded(appContext);
-                } catch (Exception | LinkageError failure) {
-                    nativeFailure = failure instanceof DexKitNativeLoader.LoadFailure
-                            ? (DexKitNativeLoader.LoadFailure) failure
-                            : new DexKitNativeLoader.LoadFailure("nativeLibraryLoader", failure);
-                    trace("nativeBootstrapFailed", nativeFailure.getMessage());
-                    log.error("resolver NATIVE_BOOTSTRAP_FAILED", nativeFailure);
-                    throw nativeFailure;
-                }
+                DexKitNativeLoader.ensureLoaded(appContext());
                 trace("bridgeCreateStart", "trigger=" + trigger
                         + " generation=" + bridgeGeneration
                         + " loaderIdentity=" + loaderIdentity);
-                bridge = bridgeOpener.create(loader);
-                if (bridge == null) {
-                    trace("bridgeCreateEnd", "trigger=" + trigger
-                            + " failed=bridgeOpenerReturnedNull");
-                    return null;
-                }
+                bridge = DexKitBridge.create(loader, true);
                 long end = SystemClock.elapsedRealtime();
                 trace("bridgeCreateEnd", "trigger=" + trigger
                         + " elapsedMs=" + (end - start)
@@ -140,8 +89,6 @@ final class DexKitSession {
                             + " rebuild=" + rebuildCount);
                 }
                 return bridge.isValid() ? bridge : null;
-            } catch (DexKitNativeLoader.LoadFailure failure) {
-                throw failure;
             } catch (Throwable throwable) {
                 trace("bridgeCreateEnd", "trigger=" + trigger + " failed=" + throwable);
                 log.error("resolver dexkit bridge creation failed trigger=" + trigger, throwable);
@@ -187,4 +134,7 @@ final class DexKitSession {
         }
     }
 
+    private android.content.Context appContext() {
+        return HookCoordinator.currentApplication();
+    }
 }

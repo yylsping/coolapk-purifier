@@ -1,6 +1,10 @@
 package io.github.yylsping.coolapkpurifier;
 
 import android.app.Application;
+import android.os.Build;
+
+import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.libxposed.api.XposedModule;
@@ -27,8 +31,6 @@ public final class CoolapkModule extends XposedModule {
 
         ModuleLog log = new ModuleLog(this);
         try {
-            DexKitNativeLoader.configure(() -> DexKitNativeLoader.Location.fromFramework(
-                    getModuleApplicationInfo(), BuildConfig.VERSION_CODE));
             HookCoordinator created = new HookCoordinator(this, log, param.getClassLoader());
             created.install();
             coordinator = created;
@@ -40,6 +42,22 @@ public final class CoolapkModule extends XposedModule {
     }
 
     private static String currentProcessName() {
-        return Application.getProcessName();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return Application.getProcessName();
+        }
+        try (FileInputStream stream = new FileInputStream("/proc/self/cmdline")) {
+            byte[] bytes = new byte[256];
+            int length = stream.read(bytes);
+            if (length <= 0) {
+                return "";
+            }
+            int end = 0;
+            while (end < length && bytes[end] != 0) {
+                end++;
+            }
+            return new String(bytes, 0, end, StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 }

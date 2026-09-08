@@ -1,3 +1,4 @@
+# Gradle, Android and editor state
 .gradle/
 **/build/
 .idea/
@@ -11,6 +12,7 @@ local.properties
 .env.*
 !.env.example
 signing-private/
+signing.properties
 keystore.properties
 !keystore.properties.example
 *.jks
@@ -27,64 +29,40 @@ keystore.properties
 *-source.zip
 dist/
 reference/decompiled/
-
-# Internal validation notes
-/TEST_REPORT.md
-/XPOSED_UPDATE.md
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Local reverse-engineering workspace and user-supplied APK corpus
 analysis/
 history-apks/
-
-# User-provided local architecture brief
-/启动时序与全版本 Resolver 架构优化.md
-
-# User-provided final stabilization brief
-/rc5 → Stable 最终收尾提示词.md
-/2.2.0-followup-optimization.md
-
-# Local tool state
-/.dsh/
-/.codex/
-
-# User-provided bootstrap retirement brief
-/Stable 最终微优化：Bootstrap 终态零开销.md
-
-# User-provided cache finalization brief
-/Stable 最终缓存收尾.md
-
-# User-provided issue #3 follow-up briefs
-/coolapk-purifier-issue3-followup-fix-prompt.md
-/coolapk-purifier-issue3-third-static-fix.md
-/coolapk-purifier-history-apks-low-power.md
-/基于静态分析的Issue #3专项排查.md
-
-# User-provided local agent rules
-/AGENTS.md
-
-# User-provided 2.2.0 release preflight brief
-/2.2.0_full_release_preflight.md
-
-# Local packaging archive
+/reverse-analysis/
+/tools/
 /coolapk--last.zip
 
-# Local reports, screenshots and device-debug captures
-/feed-403-root-cause-investigation-report.md
-/release-notes-*.md
+# Root Markdown is private by default; README is public.
+# Previously tracked historical release notes remain tracked.
+/*.md
+!/README.md
+
+# AI instructions and prompts, including nested copies
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+*prompt*.md
+*PROMPT*.md
+*提示词*.md
+*规则*.md
+prompts/
+/.dsh/
+/.codex/
+/.claude/
+/.gemini/
+
+# Local experiment notes, device captures and logs
+processing*/
+/local-archive*/
+*.log
 /*.png
 /*.jpg
 /*.jpeg
 /*.xml
 
-# Local prompts, rules and private working instructions
-/*prompt*.md
-/*提示词*.md
-/*规则*.md
-
-# Local reverse-engineering and experiment workspaces
-/reverse-analysis/
-/tools/
+# OS files
+.DS_Store
+Thumbs.db

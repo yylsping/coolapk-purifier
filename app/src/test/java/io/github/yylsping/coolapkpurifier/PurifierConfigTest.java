@@ -8,9 +8,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.nio.charset.StandardCharsets;
 
 public final class PurifierConfigTest {
     @Rule
@@ -27,15 +27,14 @@ public final class PurifierConfigTest {
     };
 
     @Test
-    public void firstLoadPersistsAllFeaturesDisabled() throws Exception {
+    public void firstLoadPersistsLegacyProtectionsEnabledAndOptionsDisabled() throws Exception {
         PurifierConfig config = new PurifierConfig(folder.getRoot(), REPLACE, null);
 
-        assertFalse(config.isEnabled(PurifierConfig.Feature.SPLASH));
-        assertFalse(config.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
-        assertFalse(config.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
         assertFalse(config.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
         assertFalse(config.isEnabled(PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND));
-        assertFalse(config.isEnabled(PurifierConfig.Feature.RELATED_DATA));
         assertFalse(config.isEnabled(PurifierConfig.Feature.SAME_TOPIC_FEED));
         assertFalse(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
         assertEquals(PurifierConfig.PendingKind.DEFAULT, config.pendingKind());
@@ -44,7 +43,7 @@ public final class PurifierConfigTest {
 
         PurifierConfig reloaded = new PurifierConfig(folder.getRoot(), REPLACE, null);
         assertEquals(PurifierConfig.PendingKind.DEFAULT, reloaded.pendingKind());
-        assertFalse(reloaded.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertTrue(reloaded.isEnabled(PurifierConfig.Feature.SPLASH));
         assertFalse(reloaded.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
     }
 
@@ -66,11 +65,11 @@ public final class PurifierConfigTest {
     public void issueOptionsAreIneffectiveBelowCoolapk15WithoutLosingChoice()
             throws Exception {
         PurifierConfig config = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        config.setEnabled(PurifierConfig.Feature.RELATED_DATA, true);
+        config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, true);
 
-        assertFalse(config.isEffectiveEnabled(PurifierConfig.Feature.RELATED_DATA, 14));
-        assertTrue(config.isEffectiveEnabled(PurifierConfig.Feature.RELATED_DATA, 15));
-        assertTrue(config.isEnabled(PurifierConfig.Feature.RELATED_DATA));
+        assertFalse(config.isEffectiveEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, 14));
+        assertTrue(config.isEffectiveEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, 15));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
     }
 
     @Test
@@ -96,7 +95,7 @@ public final class PurifierConfigTest {
     @Test
     public void disablingAnOptionAlsoMarksSelectionPending() throws Exception {
         PurifierConfig config = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        assertTrue(config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, true));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
         assertTrue(config.markAdapted());
 
         assertTrue(config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, false));
@@ -109,12 +108,12 @@ public final class PurifierConfigTest {
     @Test
     public void multipleChangesSurviveRestart() throws Exception {
         PurifierConfig config = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        assertTrue(config.setEnabled(PurifierConfig.Feature.SPLASH, true));
+        assertTrue(config.setEnabled(PurifierConfig.Feature.SPLASH, false));
         assertTrue(config.setEnabled(PurifierConfig.Feature.AUTO_COMMENT, true));
         assertTrue(config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, true));
 
         PurifierConfig reloaded = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        assertTrue(reloaded.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertFalse(reloaded.isEnabled(PurifierConfig.Feature.SPLASH));
         assertTrue(reloaded.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
         assertTrue(reloaded.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
     }
@@ -125,13 +124,39 @@ public final class PurifierConfigTest {
                 .resolve(PurifierConfig.FILE_NAME).toFile();
         Files.write(file.toPath(), "{broken".getBytes(StandardCharsets.UTF_8));
         PurifierConfig malformed = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        assertFalse(malformed.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
+        assertTrue(malformed.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
         assertFalse(malformed.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
 
         Files.write(file.toPath(), ("{\"schema\":999,\"options\":{}}")
                 .getBytes(StandardCharsets.UTF_8));
         PurifierConfig unsupported = new PurifierConfig(folder.getRoot(), REPLACE, null);
-        assertFalse(unsupported.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
+        assertTrue(unsupported.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
         assertFalse(unsupported.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
+    }
+
+    @Test
+    public void legacyRelatedDataKeyIsIgnoredAndDroppedOnRewrite() throws Exception {
+        java.io.File file = folder.getRoot().toPath()
+                .resolve(PurifierConfig.FILE_NAME).toFile();
+        Files.write(file.toPath(), ("{\"schema\":1,\"revision\":3,"
+                + "\"pendingAdaptation\":\"none\",\"options\":{"
+                + "\"remove_splash_ads\":false,"
+                + "\"remove_related_data\":true,"
+                + "\"remove_detail_sponsor\":true}}")
+                .getBytes(StandardCharsets.UTF_8));
+
+        PurifierConfig config = new PurifierConfig(folder.getRoot(), REPLACE, null);
+        assertFalse(config.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
+
+        // Any later durable write re-serializes only the surviving enum keys.
+        assertTrue(config.setEnabled(PurifierConfig.Feature.AUTO_COMMENT, true));
+        String rewritten = new String(Files.readAllBytes(file.toPath()),
+                StandardCharsets.UTF_8);
+        assertFalse(rewritten.contains("remove_related_data"));
+        for (PurifierConfig.Feature feature : PurifierConfig.Feature.values()) {
+            assertTrue(rewritten.contains(feature.key));
+        }
     }
 }

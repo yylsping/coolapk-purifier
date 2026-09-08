@@ -23,12 +23,11 @@ final class PurifierConfig {
     private static final int MAX_BYTES = 64 * 1024;
 
     enum Feature {
-        SPLASH("remove_splash_ads", "去除启动/开屏广告和全屏广告", false, false),
-        FEED_SPONSOR("remove_feed_sponsor", "去除首页信息流广告与赞助卡片", false, false),
-        REPLY_SPONSOR("remove_reply_sponsor", "去除帖子回复区及评论中的赞助内容", false, false),
+        SPLASH("remove_splash_ads", "去除启动/开屏广告和全屏广告", true, false),
+        FEED_SPONSOR("remove_feed_sponsor", "去除首页信息流广告与赞助卡片", true, false),
+        REPLY_SPONSOR("remove_reply_sponsor", "去除帖子回复区及评论中的赞助内容", true, false),
         AUTO_COMMENT("remove_auto_comment", "去除自动评论提示", false, true),
         TOPIC_DEVICE_RECOMMEND("remove_topic_device_recommend", "去除话题与机型推荐", false, true),
-        RELATED_DATA("remove_related_data", "去除帖子相关推荐", false, true),
         SAME_TOPIC_FEED("remove_same_topic_feed", "去除同话题动态", false, true),
         DETAIL_SPONSOR("remove_detail_sponsor", "去除帖子内推广", false, true);
 

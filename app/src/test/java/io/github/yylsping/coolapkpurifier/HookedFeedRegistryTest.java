@@ -78,40 +78,19 @@ public final class HookedFeedRegistryTest {
         assertEquals(0, registry.size());
     }
 
-    /**
-     * Coordinator-shaped coverage probe: an anchor is COMPLETE only when
-     * every discovered feed-shaped method of the class carries a live hook.
-     */
     @Test
-    public void anchorSemanticsSettleOnlyWhenEveryDiscoveredMethodIsLive()
-            throws Exception {
+    public void anchorSemanticsSettleOnlyWhenBothClassesAreLive() throws Exception {
         HookedFeedRegistry registry = new HookedFeedRegistry();
-
-        // AnchorA declares two feed methods; only one hooked → PARTIAL.
         registry.add(AnchorA.class.getMethod("first", List.class, boolean.class));
-        assertFalse(anchorCoverage(registry));
 
-        // Both anchors fully harvested → settled.
-        registry.add(AnchorA.class.getMethod("second", List.class, boolean.class));
+        String anchorA = DescriptorUtils.classDescriptorOf(AnchorA.class);
+        String anchorB = DescriptorUtils.classDescriptorOf(AnchorB.class);
+
+        assertFalse(ReadinessPolicy.isCoverageSettledByAnchors(
+                registry.hasHookedInClass(anchorA), registry.hasHookedInClass(anchorB)));
+
         registry.add(AnchorB.class.getMethod("only", List.class, boolean.class));
-        assertTrue(anchorCoverage(registry));
-    }
-
-    private static boolean anchorCoverage(HookedFeedRegistry registry) {
-        java.util.List<FeedCoverage.Anchor> snapshot = new java.util.ArrayList<>();
-        for (Class<?> anchor : java.util.Arrays.asList(AnchorA.class, AnchorB.class)) {
-            java.util.List<String> discovered = new java.util.ArrayList<>();
-            java.util.List<String> installed = new java.util.ArrayList<>();
-            for (java.lang.reflect.Method method : anchor.getDeclaredMethods()) {
-                discovered.add(method.getName());
-                if (registry.contains(method)) {
-                    installed.add(method.getName());
-                }
-            }
-            snapshot.add(FeedCoverage.anchor(
-                    DescriptorUtils.classDescriptorOf(anchor), true,
-                    discovered, installed::contains));
-        }
-        return FeedCoverage.settledByAnchors(snapshot);
+        assertTrue(ReadinessPolicy.isCoverageSettledByAnchors(
+                registry.hasHookedInClass(anchorA), registry.hasHookedInClass(anchorB)));
     }
 }

@@ -1,80 +1,68 @@
 # 酷安净化
 
-基于 libxposed Modern API 102、面向酷安版本变化进行运行时适配的去广告模块。
+基于 libxposed Modern API 102 的酷安去广告模块，在酷安原生设置中提供独立的净化开关。
 
-## 功能
+## 功能与默认设置
 
-- 在酷安原生“设置”列表首部注入“酷安净化”入口；所有选项直接持久化到酷安 files/coolapk_purifier_config.json。
-- 全新安装默认关闭启动/开屏广告、首页信息流广告和回复区赞助过滤；帖子内推广原本即默认关闭。升级安装保留已有明确开关值，不静默覆盖。
-- 四个去广告选项仍可独立开启，但设置页均明确提示开启后可能被检测并触发账号风控；垃圾布局屏蔽项下方不显示该风险提示。
-- 回复区过滤在 15.9.0 保留旧 holder，16.5.1 / 16.6.1 通过源码语义、评论页注册关系、布局资源与父类抽象绑定契约定位专用自绘 binder，只折叠精确 `feedDetailReplySponsorCard`。两版目标安装及缓存读取通过，关闭开关不安装新 Hook。设置页不显示 Reply 运行状态副标题，诊断信息保留在日志中；用户开关状态不受影响。
-- 可选去除自动评论提示、话题与机型推荐、帖子相关推荐、同话题动态和帖子内推广；酷安 15.x 以下自动禁用这些新选项。
-- 详情页推荐采用上游数据链过滤：话题/产品/机型卡从 `Feed.getTargetRow()` 的专用组装入口截断，帖子内推广在 `Feed.getDetailSponsorCard()` 进入 header item 列表前置空；主解析不依赖广告文案或其他可见中文文本。
-- 同话题动态按服务端 `entityTemplate=feedRecommendListCard` 在 Feed 数据列表中精确过滤；宿主唯一模板判定方法是数据过滤的安全硬 gate，证据未验证时保留内容并进入安全降级，不使用标题或其他用户可控文本判定。Mode A 已移除 `LayoutInflater.inflate` / `View.setTag` 布局回退。
-- 配置变更后于下次启动仅解析尚未缓存的已选目标，并分别提示首次适配与适配完成状态。
-- 开屏净化保留已解析的 Splash Activity 展示边界，并对确认的内嵌 SplashAdFragment 路径增加严格唯一的 business boolean decision Hook：先执行原方法，再按 Splash 开关覆盖返回值；不恢复旧 PRE_BLOCK。Instrumentation 用于启动期及必要降级兜底；只有 READY、专用能力与 `SplashLifecycleGuard` 注册均满足时才解除，注册失败保留兜底并如实报告非零 framework。非 Xposed lifecycle guard 在 READY 后继续覆盖已解析及精确 legacy 类名，不做宽泛名称匹配。检测到内嵌 SplashAdFragment 能力时，READY 还要求当前运行代的决策 Hook 已安装；不只检查 `SplashAdActivity.onCreate`。
-- 核心易混淆业务目标优先由 DexKit 运行时指纹跨版本解析；设置入口使用 Android `ActivityLifecycleCallbacks` 提前安装严格验证的原生 `initData` 业务 Hook，失败只做有限重试，不退回 overlay 或 framework Hook。ViewHolder 使用受控语义定位。临时 ClassLoader discovery 按需安装，并在终态退休。
-- SplashCritical 优先解析：启动时先解析并安装开屏 Hook，再后台完成 Feed/Entity getter 解析。
-- 解析顺序：有效缓存 → 强 DexKit 指纹 → 弱 DexKit 指纹 → 历史类名/反射兜底；build cache 只保存 descriptor 元数据，live target 只在当前 ClassLoader generation 内验证、累积和安装。
-- 多目标覆盖：对本次启动成功解析并验证的开屏 Activity 逐一安装 Hook，不把未解析的历史类名算作专用覆盖；Feed 层同时 Hook EntityAdHelper 与 EntityListFragment 中发现的 `(List, boolean) -> List` 业务入口。
-- 两层就绪判定：核心过滤可用（开屏 + 至少一个 Feed Hook + getter 完整）与 Feed 覆盖收敛（两个历史锚点类本次启动发现的全部 feed 方法均已 Hook，或 20s deadline 兜底收敛）同时满足才进入 READY；覆盖未收敛期间临时保留单发 ClassLoader 观察器，并由运行时事件与一次性 8s watchdog 提供有界重扫，在 20s deadline 前完成确定性收敛，形成确定性重试路径。
-- 会话触发合并：解析会话运行期间到来的 runtime-dex / watchdog 触发不会丢失，合并为恰好一轮后续会话；READY/DEGRADED 为真正冻结终态，迟到的后台会话无法翻转。终态先逻辑停用全局 loadClass discovery Hook，再尝试 framework unhook；正常路径完全解除，解除失败时残留 Hook 为 inert。
-- Resolver 事务隔离：每个 session 在启动时固定捕获 generation + ClassLoader，并独占其 DexKitBridge；loader 中途切换只将旧 session 标记为 superseded，不跨线程关闭 bridge。旧结果不得 apply、写 cache、进入 READY/DEGRADED，bridge 只由所属 worker 退出时关闭。
-- Terminal 事务隔离：deadline、cache hit、full scan 与 error 的 READY/DEGRADED 都在同一个 runtimeEpoch 临界区读取当前 generation readiness、missingRequired 和 loader，并原子提交带 generation/loader 的 terminal snapshot；cleanup、日志、Toast 与 watcher retire 在锁外执行，不存在 read G1 / commit G2。
-- DexKit Context 隔离：resolver session 直接携带 `Application.attach` 已取得的 appContext，native loader/bridge 主路径不再反射 `ActivityThread.currentApplication()`；Context 尚不可用时安全保持可重试。
-- DexKit native 从 libxposed API 102 的模块信息定位，不查询酷安 PackageManager 中的模块包。按当前进程位数匹配实际打包 ABI，优先加载框架提供的 native 路径；临时提取校验 APK/ABI/CRC/SHA-256，损坏后最多重提取一次，加载后删除临时 so。
-- Runtime DEX / Bridge 尚未就绪时保持有界重试；native 永久失败则立即分类为 DEXKIT_NATIVE_LOAD_FAILED，通过现有终态事务降级，不再反复等待 20 秒 watchdog。
-- 多版本持久缓存（schema 2）：stableTargetIdentity 包含包名、目标 `versionCode`、base APK 文件名与大小、稳定排序后的 split APK 文件名与大小，以及通过 `GET_SIGNING_CERTIFICATES` 读取的当前 signer 证书 DER 摘要；证书不可用会明确记录为 unavailable，不冒充真实摘要；最多保存 5 个历史版本，完整缓存文件不超过 1 MiB，LRU 淘汰，原子替换写入；多目标条目按方法/类 descriptor 稳定编号，跨会话合并不丢目标。
-- 同版本覆盖重装后 identity 不变，直接命中历史缓存；升级/降级到新版本后自动失效重扫。
-- Bootstrap 终态低开销：READY/DEGRADED 后先逻辑停用 discovery Hook，再关闭 Resolver worker、RuntimeDexObserver、watchdog，并卸载临时 Feature ClassLoader Hook；仍在运行的 session 由所属 worker 安全关闭 bridge。Application.attach 仅在交接条件满足后退休，终态清理补偿被取消的退休任务。正常 READY 解除 Instrumentation；DEGRADED 保留必要兜底。解除失败保留句柄并由 HookLedger 如实报告，不能算作“零 framework Hook”。
-- Reply discovery 优先验证已有缓存；16.x 旧缓存缺少新目标时进入正常有界解析，新 `feature.replySelfDraw` 缓存可直接安装而不扫描 DexKit。15.9.0 class-only 缓存及新 binder 缓存均共享严格安装契约。未安装时仍保留原 READY 后最多 4 次定时 `Class.forName` 和 3 次 resume 尝试（至少间隔 30s）、总预算 120s 的旧类回退；预算耗尽即注销 observer、取消任务并报告 UNAVAILABLE，不重新安装 framework Hook。
-- post-READY loader swap 采用低开销边界：generation-aware adaptation 只覆盖 bootstrap/adaptation window；进入 READY/DEGRADED 后不保留常驻 loader monitor。若宿主在终态后替换核心业务 loader，需要正常重启酷安进程以开启新 adaptation window。
-- 无缓存首次适配时按“默认三项”或“用户新增选项”分别显示一次系统 Toast；适配完成后再提示一次，缓存命中时不重复提示。
-- 不包含联网、更新器、后台服务或周期性轮询。
+打开酷安“设置”→“酷安净化”，可分别调整以下 7 项功能：
 
-“安全降级”表示：当某个已开启功能的必要语义目标无法唯一解析、无法通过签名校验或主 Hook 安装失败时，模块拒绝 Hook 不确定目标并在日志中以 `:descriptor`、`:primaryHook` 或 `:semanticEvidence` 区分缺失原因；primary、fallback 与 evidence 安装状态互不冒充。T4 的 evidence 缺失时所有删除路径均关闭；其他具备独立窄范围回退的功能可继续使用回退，但回退不满足 primary READY。它不等同于承诺未知版本的每项净化能力一定生效。
+| 功能 | 全新配置默认值 |
+| --- | --- |
+| 去除启动/开屏广告和全屏广告 | 开启 |
+| 去除首页信息流广告与赞助卡片 | 开启 |
+| 去除帖子回复区及评论中的赞助内容 | 开启 |
+| 去除自动评论提示 | 关闭 |
+| 去除话题与机型推荐 | 关闭 |
+| 去除同话题动态 | 关闭 |
+| 去除帖子内推广 | 关闭 |
+
+已有配置中的明确开关值会保留，包括 2.2.2 保存的关闭状态。保存失败时会回滚开关状态。调整选项后，强制停止酷安并重新打开。
+
+“去除帖子相关推荐”已移除。“去除同话题动态”仍保留，因此详情页仍可能显示其他相关推荐。
+
+仍可能小概率触发账号风控。
 
 ## 兼容性
 
 | 项目 | 要求 |
 | --- | --- |
-| 目标应用 | 酷安（包名 `com.coolapk.market`），运行时动态适配，不按版本分支 |
-| 已实机验证 | 13.1.1 / 15.9.0 / 16.1.2 / 16.5.1 / 16.6.1（2.2.1 回归覆盖 15.9.0 / 16.5.1 / 16.6.1） |
-| Android | 9（API 28）及以上 |
+| 目标应用 | 酷安，包名 `com.coolapk.market` |
+| 酷安版本 | 16.6.1（2608212）可完整使用全部 7 项功能 |
+| Android | 6.0 及以上 |
 | 框架 | 支持 libxposed Modern API 102 的 LSPosed |
-| 模块版本 | 2.2.2（versionCode 12） |
+| 模块版本 | 2.3.0 |
 
-模块不按酷安小版本硬编码业务分支。版本适配由 DexKit 动态解析与稳定语义锚点、资源名及受控 framework fallback 组合完成；其中 fallback 只在对应功能启用时安装，并不被视为绝对稳定接口。已实机验证版本代表测试覆盖，不构成对未来或其他版本的绝对兼容保证。若新版本功能失效，请先查看目标应用内：
+开屏和首页信息流保留动态适配；回复区专用赞助卡及四项可选功能目前仅适配酷安 16.6.1（2608212）。
 
-- `files/coolapk_purifier_bootstrap.log`：启动时序与 Bootstrap 终态日志。
-- `files/coolapk_purifier_cache_v4.json`：多版本解析缓存（schema 2；旧版 v3 缓存不迁移，升级后首次启动自动重解析）。
-- LSPosed 模块日志：Resolver 候选数与 Hook 安装情况。
+## 安装与使用
 
-并提交包含酷安版本号、Android 版本和相关日志的问题报告。
-
-## 安装
-
-1. 从 GitHub Releases 下载并安装 APK。
+1. 从 [GitHub Releases](https://github.com/yylsping/coolapk-purifier/releases) 下载并安装 APK。
 2. 在 LSPosed 中启用模块，作用域只选择“酷安”。
 3. 强制停止酷安后重新打开。
+4. 在酷安“设置”→“酷安净化”中调整选项，按提示重新启动酷安。
+
+模块没有独立桌面配置入口。首次适配时可能显示一次开屏广告。
 
 ## 构建
 
-需要 JDK 17、Android SDK 35，并可从 Maven Central 获取 `io.github.libxposed:api:102.0.0`。
+需要 JDK 17 和 Android SDK 35。
 
-运行单元测试并生成 debug 测试包：
+运行单元测试并生成调试包：
 
 ```powershell
-.\gradlew.bat test assembleDebug
+.\gradlew.bat --no-daemon testDebugUnitTest testCompatibleUnitTest testReleaseUnitTest assembleDebug
 ```
 
-测试 APK 输出到 `app/build/outputs/apk/debug/`。面向普通用户的已签名版本请从 GitHub Releases 下载。
+调试包输出到 `app/build/outputs/apk/debug/`。生成 release 包可使用 `assembleRelease`，签名配置放在本地 `signing-private/` 中。
 
+## 问题反馈
+
+请在 [Issues](https://github.com/yylsping/coolapk-purifier/issues) 中提供模块、酷安、Android 与 LSPosed 版本，以及开关状态、复现步骤和必要的脱敏日志。
+
+酷安应用目录中的 `files/coolapk_purifier_bootstrap.log` 和 LSPosed 模块日志可用于排查问题。请勿上传账号凭据或未经脱敏的完整设备日志。
 
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)。
 
-## 免责声明
-
-本项目仅供学习、研究和个人设备使用，与酷安及 LSPosed 项目无隶属或认可关系。使用前请确认符合当地法律及相关服务条款。
+本项目用于学习、研究和个人设备使用，与酷安及 LSPosed 项目无隶属或认可关系。

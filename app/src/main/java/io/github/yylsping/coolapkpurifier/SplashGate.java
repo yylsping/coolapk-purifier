@@ -23,7 +23,10 @@ final class SplashGate {
      * older builds used FullScreenAdActivity.
      */
     private static final Set<String> LEGACY_SPLASH_NAMES = Collections.unmodifiableSet(
-            TargetResolver.LEGACY_SPLASH_CLASS_NAMES);
+            new java.util.HashSet<>(java.util.Arrays.asList(
+                    "com.coolapk.market.view.splash.SplashActivity",
+                    "com.coolapk.market.view.splash.SplashAdActivity",
+                    "com.coolapk.market.view.splash.FullScreenAdActivity")));
 
     private final Set<Class<?>> resolvedSplashClasses = ConcurrentHashMap.newKeySet();
     private volatile boolean mainActivitySeen;
@@ -89,10 +92,6 @@ final class SplashGate {
         return isResolvedSplash(activity)
                 || isFallbackSplashCandidate(activity)
                 || isLegacySplash(activity);
-    }
-
-    boolean shouldFinishLifecycleSplash(Activity activity) {
-        return activity != null && (isResolvedSplash(activity) || isLegacySplash(activity));
     }
 
     private static boolean isSplashSimpleName(String simpleName) {

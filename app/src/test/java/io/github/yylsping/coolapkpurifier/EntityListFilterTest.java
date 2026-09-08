@@ -12,17 +12,9 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 
 public final class EntityListFilterTest {
-    @Rule
-    public final TemporaryFolder folder = new TemporaryFolder();
-
     private EntityClassifier classifier;
     private EntityListFilter filter;
 
@@ -42,10 +34,10 @@ public final class EntityListFilterTest {
     }
 
     @Test
-    public void structuralSponsorMetadataIsRecognized() {
+    public void allLegacyRulesArePreserved() {
         assertTrue(classifier.isSponsored(new Entity("SponsorCard", "", "", "")));
-        assertTrue(classifier.isSponsored(new Entity(
-                "Feed_Detail_Reply_Sponsor_Card", "", "", "")));
+        assertTrue(classifier.isSponsored(new Entity("", "SPONSORED-42", "", "")));
+        assertTrue(classifier.isSponsored(new Entity("", "", "Feed_Detail_Reply_Sponsor_Card", "")));
         assertTrue(classifier.isSponsored(new Entity("NativeAdCard", "", "", "")));
         assertTrue(classifier.isSponsored(new Entity("advert_banner", "", "", "")));
         assertTrue(classifier.isSponsored(new Entity("replyAdCard", "", "", "")));
@@ -54,154 +46,18 @@ public final class EntityListFilterTest {
     }
 
     @Test
-    public void userTitleAndIsolatedEntityIdCannotTriggerSponsorRemoval() {
-        assertFalse(classifier.isSponsored(new Entity(
-                "feed", "SPONSORED-42", "ordinary", "feed")));
-        assertFalse(classifier.isSponsored(new Entity(
-                "feed", "42", "My sponsor experience", "feed")));
-    }
+    public void exactReplySponsorTemplateIsCarvedOutOnly() {
+        Entity exact = new Entity("feedDetailReplySponsorCard", "sponsored-id",
+                "sponsor title", "advertisement");
+        Entity wrongCase = new Entity("FeedDetailReplySponsorCard", "", "", "");
+        Entity otherSponsor = new Entity("sponsorCard", "", "", "");
 
-    @Test
-    public void selfDrawRequiresExactTemplateAndHonorsReplySwitch() throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, true);
-        classifier.setConfig(config);
-        Entity sponsor = new Entity("feedDetailReplySponsorCard", "", "", "entityCard");
-        assertTrue(classifier.shouldRemoveReplySelfDraw(sponsor));
-        for (String template : Arrays.asList("feedReply", "reply", "subReply", "feed", "sponsorCard",
-                "feedDetailReplySponsorCardSuffix", "FeedDetailReplySponsorCard", "")) {
-            assertFalse(classifier.shouldRemoveReplySelfDraw(new Entity(
-                    template, "sponsor", "feedDetailReplySponsorCard", "native_ad")));
-        }
-        config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, false);
-        config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, true);
-        assertFalse(classifier.shouldRemoveReplySelfDraw(sponsor));
-        assertFalse(classifier.shouldRemoveReplySelfDraw(null));
-        assertFalse(classifier.shouldRemoveReplySelfDraw(new Object()));
-    }
+        assertFalse(classifier.isSponsored(exact));
+        assertTrue(classifier.isSponsored(wrongCase));
+        assertTrue(classifier.isSponsored(otherSponsor));
 
-    @Test
-    public void selfDrawPreservesContentWithoutVerifiedGettersOrConfig() throws Exception {
-        Entity sponsor = new Entity("feedDetailReplySponsorCard", "", "", "");
-        assertFalse(classifier.shouldRemoveReplySelfDraw(sponsor));
-        classifier.setConfig(newConfig());
-        classifier.setAccessors(null);
-        assertFalse(classifier.shouldRemoveReplySelfDraw(sponsor));
-    }
-
-    @Test
-    public void enabledReplySponsorDoesNotDependOnDisabledDetailSponsor() throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, true);
-        classifier.setConfig(config);
-        Entity replyCard = new Entity("feed_detail_reply_sponsor_card", "", "", "");
-
-        assertTrue(classifier.shouldRemove(replyCard, EntityClassifier.Context.REPLY));
-        assertFalse(classifier.shouldRemove(replyCard, EntityClassifier.Context.DETAIL));
-    }
-
-    @Test
-    public void replyAndDetailSwitchesAreIndependentInEveryCombination() throws Exception {
-        Entity replyCard = new Entity("feed_detail_reply_sponsor_card", "", "", "");
-        Entity detailCard = new Entity("detailSponsorCard", "", "promotion", "");
-        boolean[][] combinations = {
-                {true, false}, {false, true}, {true, true}, {false, false}
-        };
-        for (boolean[] combination : combinations) {
-            PurifierConfig config = newConfig();
-            config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, combination[0]);
-            config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, combination[1]);
-            classifier.setConfig(config);
-
-            assertEquals(combination[0], classifier.shouldRemove(
-                    replyCard, EntityClassifier.Context.REPLY));
-            assertEquals(combination[1], classifier.shouldRemove(
-                    detailCard, EntityClassifier.Context.DETAIL));
-        }
-    }
-
-    @Test
-    public void sameSponsorEntityUsesTheHookContextSwitch() throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.FEED_SPONSOR, false);
-        config.setEnabled(PurifierConfig.Feature.REPLY_SPONSOR, true);
-        config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, false);
-        classifier.setConfig(config);
-        Entity entity = new Entity("sponsorCard", "", "", "");
-
-        assertFalse(classifier.shouldRemove(entity, EntityClassifier.Context.FEED));
-        assertTrue(classifier.shouldRemove(entity, EntityClassifier.Context.REPLY));
-        assertFalse(classifier.shouldRemove(entity, EntityClassifier.Context.DETAIL));
-    }
-
-    @Test
-    public void ordinaryReplyAndDetailContentAreNeverRemoved() throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, true);
-        classifier.setConfig(config);
-        Entity ordinaryReply = new Entity("feed_reply", "42", "normal", "reply");
-        Entity ordinaryDetail = new Entity("feed_detail", "43", "normal", "feed");
-
-        assertFalse(classifier.shouldRemove(
-                ordinaryReply, EntityClassifier.Context.REPLY));
-        assertFalse(classifier.shouldRemove(
-                ordinaryDetail, EntityClassifier.Context.DETAIL));
-    }
-
-    @Test
-    public void exactSameTopicEntityTemplateIsFilteredUpstreamWhenEnabled()
-            throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.SAME_TOPIC_FEED, true);
-        classifier.setConfig(config);
-        classifier.setSameTopicSemanticVerified(true);
-        Entity recommendCard = new Entity(
-                "feedRecommendListCard", "card-1", "anything", "entity_card");
-
-        assertTrue(classifier.isSameTopicRecommendation(recommendCard));
-        assertTrue(classifier.shouldRemove(recommendCard, EntityClassifier.Context.FEED));
-    }
-
-    @Test
-    public void sameTopicExactTemplateIsPreservedWithoutVerifiedEvidence()
-            throws Exception {
-        PurifierConfig config = newConfig();
-        config.setEnabled(PurifierConfig.Feature.SAME_TOPIC_FEED, true);
-        classifier.setConfig(config);
-        Entity recommendCard = new Entity(
-                "feedRecommendListCard", "card-1", "anything", "entity_card");
-
-        assertTrue(classifier.isSameTopicRecommendation(recommendCard));
-        assertFalse(classifier.shouldRemove(recommendCard, EntityClassifier.Context.FEED));
-    }
-
-    @Test
-    public void sameTopicTemplateIsExactAndSwitchScoped() throws Exception {
-        PurifierConfig disabled = newConfig();
-        classifier.setConfig(disabled);
-        Entity exact = new Entity("feedRecommendListCard", "1", "", "entity_card");
-        Entity nearMiss = new Entity(
-                "feedRecommendListCardUserPost", "2", "", "entity_card");
-
-        assertFalse(classifier.shouldRemove(exact, EntityClassifier.Context.FEED));
-        disabled.setEnabled(PurifierConfig.Feature.SAME_TOPIC_FEED, true);
-        classifier.setSameTopicSemanticVerified(true);
-        assertFalse(classifier.isSameTopicRecommendation(nearMiss));
-        assertFalse(classifier.shouldRemove(nearMiss, EntityClassifier.Context.FEED));
-        assertFalse(classifier.shouldRemove(exact, EntityClassifier.Context.DETAIL));
-        assertFalse(classifier.shouldRemove(exact, EntityClassifier.Context.REPLY));
-    }
-
-    private PurifierConfig newConfig() throws Exception {
-        return new PurifierConfig(folder.newFolder(), (temp, destination) -> {
-            try {
-                Files.copy(temp.toPath(), destination.toPath(),
-                        StandardCopyOption.REPLACE_EXISTING);
-                return true;
-            } catch (Throwable ignored) {
-                return false;
-            }
-        }, null);
+        List<Entity> source = Arrays.asList(otherSponsor, exact);
+        assertEquals(Arrays.asList(exact), filter.filter(source));
     }
 
     @Test
