@@ -17,6 +17,32 @@ final class DescriptorUtils {
         return classDescriptorOf(type.getName());
     }
 
+    /** Dex type descriptor for a dotted class name or a primitive type name. */
+    static String typeDescriptorOf(String dottedOrPrimitive) {
+        switch (dottedOrPrimitive) {
+            case "void":
+                return "V";
+            case "boolean":
+                return "Z";
+            case "byte":
+                return "B";
+            case "short":
+                return "S";
+            case "char":
+                return "C";
+            case "int":
+                return "I";
+            case "long":
+                return "J";
+            case "float":
+                return "F";
+            case "double":
+                return "D";
+            default:
+                return classDescriptorOf(dottedOrPrimitive);
+        }
+    }
+
     static Class<?> classForName(String nameOrDescriptor, ClassLoader loader)
             throws ClassNotFoundException {
         if (nameOrDescriptor == null || nameOrDescriptor.isEmpty()) {

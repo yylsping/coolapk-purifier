@@ -22,6 +22,8 @@ final class EntityListHooks {
     private final XposedModule module;
     private final ModuleLog log;
     private final FeatureGate gate;
+    private final HookLedger ledger;
+    private final FeatureExposureLedger exposureLedger;
     private final EntityClassifier classifier = new EntityClassifier();
     private final EntityListFilter filter = new EntityListFilter(classifier);
     private final HookedFeedRegistry hooked = new HookedFeedRegistry();
@@ -29,9 +31,20 @@ final class EntityListHooks {
     private volatile boolean accessorsComplete;
 
     EntityListHooks(XposedModule module, ModuleLog log, FeatureGate gate) {
+        this(module, log, gate, null, null);
+    }
+
+    EntityListHooks(XposedModule module, ModuleLog log, FeatureGate gate, HookLedger ledger) {
+        this(module, log, gate, ledger, null);
+    }
+
+    EntityListHooks(XposedModule module, ModuleLog log, FeatureGate gate, HookLedger ledger,
+                    FeatureExposureLedger exposureLedger) {
         this.module = module;
         this.log = log;
         this.gate = gate;
+        this.ledger = ledger;
+        this.exposureLedger = exposureLedger;
     }
 
     void updateAccessors(Map<String, ResolvedTarget> targets, ClassLoader loader) {
@@ -62,6 +75,9 @@ final class EntityListHooks {
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
                     .setId("coolapk-feed-filter")
                     .intercept(chain -> {
+                        if (exposureLedger != null) {
+                            exposureLedger.recordEntered(PurifierConfig.Feature.FEED_SPONSOR);
+                        }
                         Object original = chain.proceed();
                         if (!(original instanceof List<?>)) {
                             return original;
@@ -74,6 +90,12 @@ final class EntityListHooks {
                             List<?> source = (List<?>) original;
                             List<?> filtered = filter.filter(source);
                             if (filtered != source) {
+                                if (exposureLedger != null) {
+                                    exposureLedger.recordSampleSeen(
+                                            PurifierConfig.Feature.FEED_SPONSOR);
+                                    exposureLedger.recordModified(
+                                            PurifierConfig.Feature.FEED_SPONSOR);
+                                }
                                 log.info("removed " + (source.size() - filtered.size())
                                         + " sponsored item(s) via " + method);
                             }
@@ -85,6 +107,18 @@ final class EntityListHooks {
                     });
             handles.put(method, handle);
             hooked.add(method);
+            if (ledger != null) {
+                // §7: every physical feed hook is auditable in the ledger.
+                // Idempotent: install() skips already-hooked methods, and the
+                // ledger itself dedupes repeated ids.
+                ledger.record(HookLedger.Layer.BUSINESS, "feed",
+                        "coolapk-feed-filter:" + method.getDeclaringClass().getSimpleName()
+                                + "#" + method.getName() + "/" + method.getParameterTypes().length,
+                        method.toString());
+            }
+            if (exposureLedger != null) {
+                exposureLedger.recordHookInstalled(PurifierConfig.Feature.FEED_SPONSOR);
+            }
             log.info("installed feed filter hook method=" + method);
             return 1;
         } catch (Throwable throwable) {

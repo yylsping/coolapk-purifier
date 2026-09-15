@@ -9,6 +9,7 @@ import java.util.Set;
 /** Shared target keys. The actual resolvers are split by startup priority. */
 final class TargetResolver {
     static final String KEY_FEED = "feed";
+    static final String KEY_SPLASH_DECISION = "splash_decision";
     static final String KEY_SPLASH_BASE = "splash_base";
     static final String KEY_GETTER_TEMPLATE = "getter.entityTemplate";
     static final String KEY_GETTER_ENTITY_ID = "getter.entityId";
@@ -38,6 +39,10 @@ final class TargetResolver {
     static boolean isSplashKey(String key) {
         return key != null
                 && (key.equals(KEY_SPLASH_BASE) || key.startsWith(KEY_SPLASH_BASE + "#"));
+    }
+
+    static boolean isSplashDecisionKey(String key) {
+        return KEY_SPLASH_DECISION.equals(key);
     }
 
     static String indexedKey(String base, int index) {

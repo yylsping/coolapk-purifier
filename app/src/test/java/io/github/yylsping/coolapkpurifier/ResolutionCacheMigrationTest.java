@@ -1,7 +1,9 @@
 package io.github.yylsping.coolapkpurifier;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -11,93 +13,165 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 /**
- * Schema 2 migration gate: a 2.1.0-era schema-1 cache (single positional
- * feed entry) must NEVER satisfy the new multi-target coverage READY
- * condition as a cache hit — the new resolver has to run instead.
+ * Logical cache-v6 (schema 4) migration gate and module-owned backend contract:
+ * snapshots written before the embedded splash-decision readiness contract
+ * (schema 3 and older) must NEVER be read as valid hits, and every miss
+ * carries a structured reason.
  */
 public final class ResolutionCacheMigrationTest {
     private static final String IDENTITY_JSON = "{"
             + "\"package\":\"com.coolapk.market\","
             + "\"apkPath\":\"/data/app/base.apk\","
             + "\"apkSize\":12345,"
-            + "\"signingHash\":\"abc\","
+            + "\"signingHash\":\"sha256:abc\","
             + "\"token\":\"stable-token-1\","
-            + "\"versionCode\":16551,"
-            + "\"versionName\":\"16.5.1\"}";
+            + "\"versionCode\":2608212,"
+            + "\"versionName\":\"16.6.1\"}";
 
     @Rule
     public final TemporaryFolder folder = new TemporaryFolder();
 
-    @Test
-    public void schemaOneRootAtCurrentPathIsNeverACacheHit() throws Exception {
-        File filesDir = folder.newFolder("files1");
-        writeRawCache(filesDir, "coolapk_purifier_cache_v4.json",
-                schemaOneRootWithSingleFeed());
-        TargetIdentity identity = TargetIdentity.fromJson(new JSONObject(IDENTITY_JSON));
+    private HostDataMutationGuard guard;
+    private ModuleStorage.MemoryBlobStore store;
 
-        Map<String, ResolvedTarget> loaded =
-                new ResolutionCache(filesDir).loadTargets(identity);
-
-        assertTrue(loaded.isEmpty());
+    @Before
+    public void setUp() {
+        guard = new HostDataMutationGuard();
+        store = new ModuleStorage.MemoryBlobStore("testRemote", guard);
     }
 
     @Test
-    public void saveAfterSchemaOneRootRewritesWithSchemaTwo() throws Exception {
-        File filesDir = folder.newFolder("files2");
-        writeRawCache(filesDir, "coolapk_purifier_cache_v4.json",
-                schemaOneRootWithSingleFeed());
-        TargetIdentity identity = TargetIdentity.fromJson(new JSONObject(IDENTITY_JSON));
-        ResolutionCache cache = new ResolutionCache(filesDir);
+    public void missingRemoteValueReportsFileMissingWithoutWriting() {
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertFalse(lookup.isHit());
+        assertEquals(ResolutionCache.CacheLookup.FILE_MISSING, lookup.missReason);
+        assertTrue(lookup.targets.isEmpty());
+        assertEquals(0, store.persistentWriteCount());
+        assertEquals(0, guard.snapshot().hostPrivateWrites);
+    }
 
+    @Test
+    public void legacyV4HostFileIsNeverReadOrChanged() throws Exception {
+        File legacy = folder.newFile("coolapk_purifier_cache_v4.json");
+        byte[] original = schemaTwoRoot().getBytes(StandardCharsets.UTF_8);
+        Files.write(legacy.toPath(), original);
+        long modified = legacy.lastModified();
+        ResolutionCache cache = new ResolutionCache(store);
+
+        assertEquals(ResolutionCache.CacheLookup.FILE_MISSING,
+                cache.lookup(identity()).missReason);
+        cache.saveTargets(identity(), freshTargets());
+        assertEquals(4, new JSONObject(new String(store.read(), StandardCharsets.UTF_8))
+                .getInt("schema"));
+        assertArrayEquals(original, Files.readAllBytes(legacy.toPath()));
+        assertEquals(modified, legacy.lastModified());
+        assertEquals(0, guard.snapshot().hostPrivateWrites);
+    }
+
+    @Test
+    public void schemaMismatchIsReported() {
+        store.seed(schemaTwoRoot().getBytes(StandardCharsets.UTF_8));
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertEquals(ResolutionCache.CacheLookup.SCHEMA_MISMATCH, lookup.missReason);
+    }
+
+    @Test
+    public void legacySchemaThreeSnapshotIsNeverAValidHit() {
+        store.seed(schemaTwoRoot().replace("\"schema\":2", "\"schema\":3")
+                .getBytes(StandardCharsets.UTF_8));
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertEquals(ResolutionCache.CacheLookup.SCHEMA_MISMATCH, lookup.missReason);
+        assertFalse(lookup.isHit());
+    }
+
+    @Test
+    public void identityMismatchIsReported() {
+        String otherIdentity = IDENTITY_JSON.replace("stable-token-1", "stable-token-other")
+                .replace("2608212", "2608213");
+        store.seed(("{\"schema\":4,\"entries\":[{"
+                + "\"identity\":" + otherIdentity
+                + ",\"lastUsedAt\":1,\"targets\":[]}]}")
+                .getBytes(StandardCharsets.UTF_8));
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertEquals(ResolutionCache.CacheLookup.IDENTITY_MISMATCH, lookup.missReason);
+        assertEquals(1, lookup.totalEntries);
+    }
+
+    @Test
+    public void malformedEntriesAreReported() {
+        store.seed("{\"schema\":4,\"entries\":[42,\"junk\"]}"
+                .getBytes(StandardCharsets.UTF_8));
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertEquals(ResolutionCache.CacheLookup.ENTRY_MALFORMED, lookup.missReason);
+    }
+
+    @Test
+    public void saveThenLoadRoundTripsAsHit() {
+        ResolutionCache cache = new ResolutionCache(store);
+        Map<String, ResolvedTarget> fresh = freshTargets();
+        cache.saveTargets(identity(), fresh);
+
+        ResolutionCache.CacheLookup lookup = new ResolutionCache(store).lookup(identity());
+        assertTrue(lookup.isHit());
+        assertNull(lookup.missReason);
+        assertEquals(fresh.keySet(), lookup.targets.keySet());
+        assertEquals(0, guard.snapshot().hostPrivateWrites);
+    }
+
+    @Test
+    public void cacheHitPerformsNoPersistentTouch() {
+        ResolutionCache cache = new ResolutionCache(store);
+        cache.saveTargets(identity(), freshTargets());
+        int before = store.persistentWriteCount();
+        byte[] beforeBytes = store.read();
+
+        for (int i = 0; i < 5; i++) {
+            assertTrue(cache.lookup(identity()).isHit());
+        }
+
+        assertEquals(before, store.persistentWriteCount());
+        assertArrayEquals(beforeBytes, store.read());
+        assertEquals(0, guard.snapshot().hostPrivateWrites);
+    }
+
+    @Test
+    public void recoveryMarkerUsesModuleOwnedBackend() {
+        ResolutionCache cache = new ResolutionCache(store);
+        assertFalse(cache.isRecoveryAttempted(identity()));
+        assertTrue(cache.markRecoveryAttempted(identity()));
+        assertTrue(new ResolutionCache(store).isRecoveryAttempted(identity()));
+        assertEquals(1, store.persistentWriteCount());
+        assertEquals(Long.valueOf(1L),
+                guard.snapshot().remoteWriteReasons.get("cacheRecoveryMarker"));
+        assertEquals(0, guard.snapshot().hostPrivateWrites);
+    }
+
+    private static TargetIdentity identity() {
+        try {
+            return TargetIdentity.fromJson(new JSONObject(IDENTITY_JSON));
+        } catch (org.json.JSONException impossible) {
+            throw new AssertionError(impossible);
+        }
+    }
+
+    private static Map<String, ResolvedTarget> freshTargets() {
         Map<String, ResolvedTarget> fresh = new LinkedHashMap<>();
         fresh.put(TargetResolver.KEY_FEED, new ResolvedTarget(
                 TargetResolver.KEY_FEED, "fingerprint_strong",
                 "Lcom/coolapk/market/view/ad/EntityAdHelper;",
-                "Lcom/coolapk/market/view/ad/EntityAdHelper;->a(Ljava/util/List;Z)Ljava/util/List;"));
-        cache.saveTargets(identity, fresh);
-
-        String raw = new String(Files.readAllBytes(
-                new File(filesDir, "coolapk_purifier_cache_v4.json").toPath()),
-                StandardCharsets.UTF_8);
-        assertEquals(2, new JSONObject(raw).getInt("schema"));
-        assertEquals(fresh.keySet(),
-                new ResolutionCache(filesDir).loadTargets(identity).keySet());
+                "Lcom/coolapk/market/view/ad/EntityAdHelper;->a(Ljava/util/List;Z)"
+                        + "Ljava/util/List;"));
+        return fresh;
     }
 
-    @Test
-    public void legacyV3FileIsIgnoredEntirely() throws Exception {
-        File filesDir = folder.newFolder("files3");
-        writeRawCache(filesDir, "coolapk_purifier_cache_v3.json",
-                schemaOneRootWithSingleFeed());
-        TargetIdentity identity = TargetIdentity.fromJson(new JSONObject(IDENTITY_JSON));
-        ResolutionCache cache = new ResolutionCache(filesDir);
-
-        assertTrue(cache.loadTargets(identity).isEmpty());
-        assertFalse(new File(filesDir, "coolapk_purifier_cache_v4.json").isFile());
-
-        Map<String, ResolvedTarget> fresh = new LinkedHashMap<>();
-        fresh.put(TargetResolver.KEY_FEED, new ResolvedTarget(
-                TargetResolver.KEY_FEED, "fingerprint_strong", "Lx;", "Lx;->m()V"));
-        cache.saveTargets(identity, fresh);
-
-        // The new file carries schema 2; the abandoned v3 file stays untouched.
-        String v4 = new String(Files.readAllBytes(
-                new File(filesDir, "coolapk_purifier_cache_v4.json").toPath()),
-                StandardCharsets.UTF_8);
-        assertEquals(2, new JSONObject(v4).getInt("schema"));
-        assertEquals(schemaOneRootWithSingleFeed(),
-                new String(Files.readAllBytes(
-                        new File(filesDir, "coolapk_purifier_cache_v3.json").toPath()),
-                        StandardCharsets.UTF_8));
-    }
-
-    private static String schemaOneRootWithSingleFeed() {
-        return "{\"schema\":1,\"entries\":[{"
+    private static String schemaTwoRoot() {
+        return "{\"schema\":2,\"entries\":[{"
                 + "\"identity\":" + IDENTITY_JSON + ","
                 + "\"lastUsedAt\":1,"
                 + "\"targets\":[{"
@@ -107,11 +181,5 @@ public final class ResolutionCacheMigrationTest {
                 + "\"method\":\"Lcom/coolapk/market/view/ad/EntityAdHelper;"
                 + "->a(Ljava/util/List;Z)Ljava/util/List;\","
                 + "\"at\":1}]}]}";
-    }
-
-    private static void writeRawCache(File filesDir, String fileName, String content)
-            throws Exception {
-        Files.write(new File(filesDir, fileName).toPath(),
-                content.getBytes(StandardCharsets.UTF_8));
     }
 }

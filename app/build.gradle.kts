@@ -13,14 +13,16 @@ val signingProperties = Properties().apply {
 
 android {
     namespace = "io.github.yylsping.coolapkpurifier"
-    compileSdk = 35
+    // libxposed service 102 publishes minCompileSdk 37. Runtime behavior stays
+    // pinned by targetSdk/minSdk below; this only exposes its compile symbols.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.yylsping.coolapkpurifier"
-        minSdk = 23
+        minSdk = 28
         targetSdk = 35
-        versionCode = 13
-        versionName = "2.3.0"
+        versionCode = 14
+        versionName = "2.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -68,9 +70,23 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    sourceSets {
+        // Unit tests read the real bundled target manifest for the 16.6.1
+        // contract regression instead of duplicating its values.
+        getByName("test") {
+            resources.srcDir("src/main/assets")
+        }
+    }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        // Required for AGP to emit/merge the global record synthetics used by
+        // the official libxposed service 102 AAR on minSdk 28.
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     packaging {
@@ -87,6 +103,7 @@ android {
 dependencies {
     compileOnly("io.github.libxposed:api:102.0.0")
     testImplementation("io.github.libxposed:api:102.0.0")
+    implementation("io.github.libxposed:service:102.0.0")
     compileOnly("org.jetbrains.kotlin:kotlin-stdlib:1.5.0")
     implementation("org.luckypray:dexkit:2.0.6")
     testImplementation("junit:junit:4.13.2")

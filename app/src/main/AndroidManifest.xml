@@ -1,9 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <application
         android:allowBackup="false"
         android:description="@string/module_description"
         android:hasCode="true"
         android:label="@string/app_name"
-        android:supportsRtl="true" />
+        android:supportsRtl="true">
+
+        <!--
+          Explicitly opened only by the user from Coolapk's settings. Normal
+          Coolapk startup never starts this process. The application exports no
+          custom silent IPC receiver/provider; the merged libxposed service
+          Provider remains framework-owned.
+        -->
+        <activity
+            android:name=".ModuleConfigActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+    </application>
 </manifest>

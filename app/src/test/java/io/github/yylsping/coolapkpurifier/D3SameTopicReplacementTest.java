@@ -18,22 +18,32 @@ import static org.junit.Assert.assertTrue;
 
 public final class D3SameTopicReplacementTest {
     @Test
+    public void manifestSpecMatchesBaselineDescriptors() {
+        SameTopicTargetSpec spec = TestManifests.profile().sameTopic;
+        assertEquals("Lcom/coolapk/market/view/cardlist/MainV8ListFragment;->"
+                        + "ઽ(Ljava/lang/Object;)Z",
+                spec.semanticDescriptor());
+        assertEquals("Lcom/coolapk/market/view/cardlist/MainV8ListFragment;->"
+                        + "onInsertRecommendListEvent(Lyl6;)V",
+                spec.eventDescriptor());
+        assertEquals("feedRecommendListCard", spec.entityTemplate);
+        assertEquals("Ϳ", spec.anchorGetter);
+        assertEquals("Ԩ", spec.cardGetter);
+    }
+
+    @Test
     public void validatesOnlyPinnedSemanticTarget() throws Exception {
-        Method exact = MainV8ListFragment.class.getMethod("\u0abd", Object.class);
+        SameTopicTargetSpec spec = TestManifests.profile().sameTopic;
+        Method exact = MainV8ListFragment.class.getMethod("ઽ", Object.class);
         Method wrong = MainV8ListFragment.class.getMethod("wrong", Object.class);
 
-        assertTrue(D3SameTopicReplacement.isExactSemanticTarget(exact));
-        assertFalse(D3SameTopicReplacement.isExactSemanticTarget(wrong));
-        assertEquals("Lcom/coolapk/market/view/cardlist/MainV8ListFragment;->"
-                + "\u0abd(Ljava/lang/Object;)Z",
-                D3SameTopicReplacement.SEMANTIC_DESCRIPTOR);
-        assertEquals("Lcom/coolapk/market/view/cardlist/MainV8ListFragment;->"
-                + "onInsertRecommendListEvent(Lyl6;)V",
-                D3SameTopicReplacement.EVENT_DESCRIPTOR);
+        assertTrue(D3SameTopicReplacement.isExactSemanticTarget(spec, exact));
+        assertFalse(D3SameTopicReplacement.isExactSemanticTarget(spec, wrong));
     }
 
     @Test
     public void exactFilterIsLazyAndOrderPreserving() throws Exception {
+        SameTopicTargetSpec spec = TestManifests.profile().sameTopic;
         Method getter = Entity.class.getMethod("getEntityTemplate");
         Entity ordinary = new Entity("feed");
         Entity exact = new Entity("feedRecommendListCard");
@@ -41,14 +51,14 @@ public final class D3SameTopicReplacementTest {
         List<Object> source = Arrays.asList(ordinary, exact, "unknown", nearMiss);
 
         List<?> filtered = D3SameTopicReplacement.filterSameTopicCards(
-                source, Entity.class, getter);
+                spec, source, Entity.class, getter);
 
         assertNotSame(source, filtered);
         assertEquals(Arrays.asList(ordinary, "unknown", nearMiss), filtered);
         List<Entity> noMatch = Collections.singletonList(nearMiss);
         assertSame(noMatch, D3SameTopicReplacement.filterSameTopicCards(
-                noMatch, Entity.class, getter));
+                spec, noMatch, Entity.class, getter));
         assertSame(noMatch, D3SameTopicReplacement.filterSameTopicCards(
-                noMatch, Entity.class, null));
+                spec, noMatch, Entity.class, null));
     }
 }

@@ -5,27 +5,30 @@ import java.security.MessageDigest;
 
 /**
  * Stable target-code identity independent of the random APK install path.
- * The same target build reinstalled at a different path gets the same key.
+ * The same target build reinstalled at a different path gets the same key,
+ * while a different versionCode, split set or signer never shares a key even
+ * when the base APK size happens to match.
  */
 final class StableIdentityKey {
     private StableIdentityKey() {
     }
 
-    static String compute(String packageName, long baseApkSize,
-                          long[] splitSizes, String signingHash) {
+    static String compute(String packageName, long versionCode, long baseApkSize,
+                          long[] splitSizes, String signerDigest) {
         StringBuilder source = new StringBuilder();
         source.append("pkg=").append(packageName);
+        source.append("|versionCode=").append(versionCode);
         source.append("|baseSize=").append(baseApkSize);
         if (splitSizes != null) {
             for (long size : splitSizes) {
                 source.append("|split=").append(size);
             }
         }
-        source.append("|cert=").append(signingHash == null ? "" : signingHash);
+        source.append("|signer=").append(signerDigest == null ? "" : signerDigest);
         return sha256(source.toString());
     }
 
-    private static String sha256(String value) {
+    static String sha256(String value) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));

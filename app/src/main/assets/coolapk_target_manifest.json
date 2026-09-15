@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "versionCode": 2608212,
+      "versionName": "16.6.1",
+      "status": "validated",
+      "targets": {
+        "detailSponsor": {
+          "kind": "detailSponsor",
+          "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
+          "methodName": "getDetailSponsorCard",
+          "returnType": "com.coolapk.market.model.Entity"
+        },
+        "replySponsor": {
+          "kind": "replySponsor",
+          "ownerClass": "fn4",
+          "methodName": "ވ",
+          "layoutField": "މ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "feedDetailReplySponsorCard",
+          "adHelperClass": "com.coolapk.market.view.ad.EntityAdHelper",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
+        "sameTopic": {
+          "kind": "sameTopic",
+          "ownerClass": "com.coolapk.market.view.cardlist.MainV8ListFragment",
+          "ownerParentClass": "com.coolapk.market.view.cardlist.EntityListFragment",
+          "semanticMethod": "ઽ",
+          "eventClass": "yl6",
+          "eventHandler": "onInsertRecommendListEvent",
+          "anchorGetter": "Ϳ",
+          "cardGetter": "Ԩ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "feedRecommendListCard"
+        },
+        "topicDeviceRecommend": {
+          "kind": "staticAssembler",
+          "ownerClass": "d14",
+          "methodName": "ޓ",
+          "parameterTypes": [
+            "com.coolapk.market.model.Feed",
+            "d14",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ],
+          "returnType": "kotlin.Unit"
+        },
+        "autoComment": {
+          "kind": "staticAssembler",
+          "ownerClass": "com.coolapk.market.view.cardlist.component.RecyclerViewItemFullVisibleControllerKt",
+          "methodName": "Ϳ",
+          "parameterTypes": [
+            "com.coolapk.market.view.cardlist.EntityListFragment"
+          ],
+          "returnType": "void"
+        }
+      }
+    }
+  ]
+}

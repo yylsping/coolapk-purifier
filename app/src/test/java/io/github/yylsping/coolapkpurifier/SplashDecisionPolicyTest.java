@@ -1,0 +1,95 @@
+package io.github.yylsping.coolapkpurifier;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public final class SplashDecisionPolicyTest {
+    @Test
+    public void trueIsOverriddenOnlyAfterOriginalSideEffectsComplete() throws Throwable {
+        List<String> order = new ArrayList<>();
+        List<Object> observed = new ArrayList<>();
+        Object result = SplashDecisionPolicy.intercept(() -> {
+            order.add("original");
+            return true;
+        }, () -> {
+            order.add("config");
+            return true;
+        }, (original, returned, enabled) -> {
+            order.add("observe");
+            observed.addAll(Arrays.asList(original, returned, enabled));
+        });
+
+        assertEquals(false, result);
+        assertEquals(Arrays.asList("original", "config", "observe"), order);
+        assertEquals(Arrays.asList(true, false, true), observed);
+    }
+
+    @Test
+    public void offPreservesBothResultsAndCallsOriginalExactlyOnce() throws Throwable {
+        for (Boolean original : new Boolean[]{true, false}) {
+            AtomicInteger calls = new AtomicInteger();
+            assertSame(original, SplashDecisionPolicy.intercept(() -> {
+                calls.incrementAndGet();
+                return original;
+            }, () -> false, (a, b, c) -> { }));
+            assertEquals(1, calls.get());
+        }
+    }
+
+    @Test
+    public void hostExceptionPropagatesWithoutConfigReadOrObservation() {
+        Throwable hostFailure = new IllegalStateException("host");
+        AtomicInteger originalCalls = new AtomicInteger();
+        AtomicInteger laterCalls = new AtomicInteger();
+        try {
+            SplashDecisionPolicy.intercept(() -> {
+                originalCalls.incrementAndGet();
+                throw hostFailure;
+            }, () -> {
+                laterCalls.incrementAndGet();
+                return true;
+            }, (a, b, c) -> laterCalls.incrementAndGet());
+            fail("host exception lost");
+        } catch (Throwable actual) {
+            assertSame(hostFailure, actual);
+        }
+        assertEquals(1, originalCalls.get());
+        assertEquals(0, laterCalls.get());
+    }
+
+    @Test
+    public void configFailureFailsOpenAndObservationFailureCannotReplayHost() throws Throwable {
+        AtomicInteger calls = new AtomicInteger();
+        assertEquals(true, SplashDecisionPolicy.intercept(() -> {
+            calls.incrementAndGet();
+            return true;
+        }, () -> {
+            throw new IllegalStateException("config");
+        }, (a, b, c) -> {
+            throw new IllegalStateException("diagnostic");
+        }));
+        assertEquals(1, calls.get());
+        assertEquals(false, SplashDecisionPolicy.intercept(() -> true, () -> true,
+                (a, b, c) -> {
+                    throw new IllegalStateException("diagnostic");
+                }));
+    }
+
+    @Test
+    public void readinessRequiresDecisionOnlyForEmbeddedHost() {
+        assertTrue(SplashDecisionPolicy.ready(true, false, false));
+        assertFalse(SplashDecisionPolicy.ready(true, true, false));
+        assertTrue(SplashDecisionPolicy.ready(true, true, true));
+        assertFalse(SplashDecisionPolicy.ready(false, true, true));
+    }
+}

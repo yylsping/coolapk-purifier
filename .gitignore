@@ -32,7 +32,8 @@ reference/decompiled/
 analysis/
 history-apks/
 /reverse-analysis/
-/tools/
+# tools/ holds the tracked offline manifest-generator; only scratch stays out.
+/tools/*/build/
 /coolapk--last.zip
 
 # Root Markdown is private by default; README is public.

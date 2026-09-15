@@ -11,28 +11,39 @@ import org.junit.Test;
 
 public final class D2ReplySponsorReplacementTest {
     @Test
+    public void manifestSpecMatchesBaselineDescriptor() {
+        ReplySponsorTargetSpec spec = TestManifests.profile().replySponsor;
+        org.junit.Assert.assertEquals("Lfn4;->ވ(Ljava/lang/Object;)V",
+                spec.descriptor());
+        org.junit.Assert.assertEquals("މ", spec.layoutField);
+        org.junit.Assert.assertEquals("feedDetailReplySponsorCard", spec.entityTemplate);
+    }
+
+    @Test
     public void acceptsExactPinnedBinderContract() throws Exception {
+        ReplySponsorTargetSpec spec = TestManifests.profile().replySponsor;
         Class<?> owner = Class.forName("fn4");
-        Method target = owner.getDeclaredMethod("\u0788", Object.class);
+        Method target = owner.getDeclaredMethod("ވ", Object.class);
         assertTrue(D2ReplySponsorReplacement.isExactTarget(
-                target, owner.getClassLoader()));
+                spec, target, owner.getClassLoader()));
         assertFalse(D2ReplySponsorReplacement.isExactTarget(
-                WrongOwner.class.getDeclaredMethod("\u0788", Object.class),
+                spec, WrongOwner.class.getDeclaredMethod("ވ", Object.class),
                 owner.getClassLoader()));
     }
 
     @Test
     public void templateMatchIsExactAndCaseSensitive() throws Exception {
+        ReplySponsorTargetSpec spec = TestManifests.profile().replySponsor;
         Method getter = Entity.class.getMethod("getEntityTemplate");
         Entity exact = new Entity("feedDetailReplySponsorCard");
         Entity nearMiss = new Entity("FeedDetailReplySponsorCard");
 
         assertTrue(D2ReplySponsorReplacement.isExactReplySponsorEntity(
-                exact, Entity.class, getter));
+                spec, exact, Entity.class, getter));
         assertFalse(D2ReplySponsorReplacement.isExactReplySponsorEntity(
-                nearMiss, Entity.class, getter));
+                spec, nearMiss, Entity.class, getter));
         assertFalse(D2ReplySponsorReplacement.isExactReplySponsorEntity(
-                null, Entity.class, getter));
+                spec, null, Entity.class, getter));
     }
 
     @Test
@@ -43,7 +54,7 @@ public final class D2ReplySponsorReplacementTest {
     }
 
     private static final class WrongOwner {
-        public void \u0788(Object value) {
+        public void ވ(Object value) {
         }
     }
 }

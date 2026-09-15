@@ -14,23 +14,48 @@ final class ModuleLog {
     }
 
     void info(String message) {
-        Log.i(TAG, message);
+        try {
+            Log.i(TAG, message);
+        } catch (Throwable ignored) {
+            // Diagnostics must never affect host behavior.
+        }
         if (module != null) {
-            module.log(Log.INFO, TAG, message);
+            try {
+                module.log(Log.INFO, TAG, message);
+            } catch (Throwable failure) {
+                androidLogFailure("LSPosed info log sink failed", failure);
+            }
         }
     }
 
     void error(String message, Throwable throwable) {
-        if (module == null) {
-            Log.e(TAG, message);
-            return;
+        try {
+            if (throwable == null) {
+                Log.e(TAG, message);
+            } else {
+                Log.e(TAG, message, throwable);
+            }
+        } catch (Throwable ignored) {
+            // Preserve the framework sink attempt below.
         }
-        if (throwable == null) {
-            Log.e(TAG, message);
-            module.log(Log.ERROR, TAG, message);
-        } else {
-            Log.e(TAG, message, throwable);
-            module.log(Log.ERROR, TAG, message, throwable);
+        if (module != null) {
+            try {
+                if (throwable == null) {
+                    module.log(Log.ERROR, TAG, message);
+                } else {
+                    module.log(Log.ERROR, TAG, message, throwable);
+                }
+            } catch (Throwable failure) {
+                androidLogFailure("LSPosed error log sink failed", failure);
+            }
+        }
+    }
+
+    private static void androidLogFailure(String message, Throwable failure) {
+        try {
+            Log.e(TAG, message, failure);
+        } catch (Throwable ignored) {
+            // There is no remaining safe diagnostics sink.
         }
     }
 }

@@ -36,6 +36,9 @@ final class TargetVerifier {
                 return "method not loadable";
             }
             switch (keyKind(target.key)) {
+                case TargetResolver.KEY_SPLASH_DECISION:
+                    return SplashDecisionResolver.verify(target, loader)
+                            ? null : "splash decision semantic contract mismatch";
                 case TargetResolver.KEY_FEED:
                     return isFeedShape(method) && !Modifier.isAbstract(method.getModifiers())
                             ? null : "feed shape mismatch";

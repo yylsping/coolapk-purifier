@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "CoolapkAdBlock"
 include(":app")
+include(":tools:manifest-generator")

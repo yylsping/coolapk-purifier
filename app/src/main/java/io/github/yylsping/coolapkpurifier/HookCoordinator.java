@@ -3,12 +3,13 @@ package io.github.yylsping.coolapkpurifier;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,20 +32,31 @@ import io.github.libxposed.api.XposedModule;
  * failure: DEGRADED
  * </pre>
  *
- * Normal triggers are Application.attach, runtime class load and Activity
- * pre-create. Timer watchdogs are only a last-resort fallback: the 8s watchdog
- * retries a session from ANY non-terminal state (including FULL_RESOLVE with
- * unsettled feed coverage), and the 20s deadline takes precedence over every
- * intermediate state and always terminates (READY when core filtering works,
- * DEGRADED otherwise). READY itself is two-layer: core hooks installed AND
- * feed coverage settled (both anchor classes hooked, or deadline).
+ * The runtime hook topology is decided once at Application.attach from the
+ * persisted feature snapshot plus the validated manifest profile (BUG-G):
+ * manifest-managed features disabled at startup never register a hook, the
+ * resolver pipeline only starts when an enabled dynamic-trusted feature
+ * needs it, and the generic Instrumentation splash fallback exists only
+ * while SPLASH is enabled and specific splash coverage is not yet proven.
+ *
+ * <p>Lifecycle invariants (BUG-D): the attach handoff succeeds exactly once,
+ * terminal states are strictly monotonic, and no late callback may submit
+ * work to a shut-down executor, recreate trace/cache/session state or
+ * reinstall pinned hooks.
  */
 final class HookCoordinator implements SplashHooks.ActivityObserver,
         RuntimeDexObserver.Listener {
     private static final long WATCHDOG_DELAY_MILLIS = 8_000L;
     private static final long DEADLINE_MILLIS = 20_000L;
+    /**
+     * libxposed must leave the Instrumentation interception stack completely
+     * before its handle is unhooked. A same-queue immediate post is still too
+     * early on cache-hit cold starts on the reference device.
+     */
+    private static final long BOOTSTRAP_RETIRE_DELAY_MILLIS = 1_000L;
     private static final String WATCHDOG_RETRY_REASON = "watchdog 8s";
     private static final String WATCHDOG_DEADLINE_REASON = "watchdog 20s deadline";
+    private static final String ATTACH_HOOK_ID = "coolapk-application-attach";
 
     private static final String ANCHOR_AD_HELPER_DESCRIPTOR =
             DescriptorUtils.classDescriptorOf(NormalResolver.AD_HELPER_CLASS);
@@ -53,10 +65,14 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
     private final XposedModule module;
     private final ModuleLog log;
+    private final ModuleStorage storage;
     private final ClassLoader primaryLoader;
+    private final ApplicationInfo moduleInfo;
     private final FeatureGate featureGate = new FeatureGate();
     private final HookLedger hookLedger = new HookLedger();
+    private final FeatureExposureLedger exposureLedger;
     private final SplashHooks splashHooks;
+    private final SplashDecisionHooks splashDecisionHooks;
     private final EntityListHooks entityListHooks;
     private final SplashGate splashGate = new SplashGate();
     private final RuntimeDexObserver runtimeDexObserver;
@@ -73,6 +89,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final Object stateLock = new Object();
     private final AtomicBoolean sessionRunning = new AtomicBoolean();
     private final AtomicBoolean bootstrapRetired = new AtomicBoolean();
+    private final AttachHandoff attachHandoff = new AttachHandoff();
     private final OnceFlag firstActivityPreRecorded = new OnceFlag();
     private final OnceFlag firstActivityPostRecorded = new OnceFlag();
     private final List<HookHandle> bootstrapHandles = new java.util.ArrayList<>();
@@ -84,6 +101,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private volatile ResolutionCache cache;
     private volatile TargetIdentity identity;
     private volatile DexKitSession dexKitSession;
+    private volatile HookTopology topology;
     private final Map<String, ResolvedTarget> resolvedTargets = new LinkedHashMap<>();
     private volatile ClassLoader activeRuntimeLoader;
     /**
@@ -94,23 +112,37 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private volatile boolean lastResolutionIncomplete;
     private volatile boolean splashCandidateSeenBeforeReady;
     private volatile boolean splashFinishedByHook;
+    private volatile boolean embeddedSplashHost;
     private volatile boolean terminalCleaned;
+    /** §10A.6: root cause for a dynamic-feature UNAVAILABLE terminal report. */
+    private volatile String dynamicFailureReason;
     private int sessionAttempt;
 
-    HookCoordinator(XposedModule module, ModuleLog log, ClassLoader primaryLoader) {
+    HookCoordinator(XposedModule module, ModuleLog log, ClassLoader primaryLoader,
+                    ApplicationInfo moduleInfo) {
         this.module = module;
         this.log = log;
+        this.storage = ModuleStorage.framework(module, log);
         this.primaryLoader = primaryLoader;
-        this.splashHooks = new SplashHooks(module, log, this);
-        this.entityListHooks = new EntityListHooks(module, log, featureGate);
-        this.runtimeDexObserver = new RuntimeDexObserver(module, log, this);
-        this.d1DetailSponsorDelta = new D1DetailSponsorDelta(module, log, featureGate);
+        this.moduleInfo = moduleInfo;
+        this.exposureLedger = new FeatureExposureLedger(log::info);
+        this.splashHooks = new SplashHooks(
+                module, log, this, hookLedger, exposureLedger);
+        this.splashDecisionHooks = new SplashDecisionHooks(
+                module, log, hookLedger, exposureLedger);
+        this.entityListHooks = new EntityListHooks(
+                module, log, featureGate, hookLedger, exposureLedger);
+        this.runtimeDexObserver = new RuntimeDexObserver(module, log, this, hookLedger);
+        this.d1DetailSponsorDelta = new D1DetailSponsorDelta(
+                module, log, featureGate, exposureLedger);
         this.d2ReplySponsorReplacement =
-                new D2ReplySponsorReplacement(module, log, featureGate);
-        this.d3SameTopicReplacement = new D3SameTopicReplacement(module, log, featureGate);
+                new D2ReplySponsorReplacement(module, log, featureGate, exposureLedger);
+        this.d3SameTopicReplacement = new D3SameTopicReplacement(
+                module, log, featureGate, exposureLedger);
         this.d5TopicDeviceRecommendDelta =
-                new D5TopicDeviceRecommendDelta(module, log, featureGate);
-        this.d6AutoCommentDelta = new D6AutoCommentDelta(module, log, featureGate);
+                new D5TopicDeviceRecommendDelta(module, log, featureGate, exposureLedger);
+        this.d6AutoCommentDelta = new D6AutoCommentDelta(
+                module, log, featureGate, exposureLedger);
         this.recoveryController = new RecoveryController(log, null, null);
         this.firstAdaptationToast = new FirstAdaptationToast(log);
     }
@@ -119,8 +151,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         markState(BootstrapState.BOOTSTRAP);
         traceAfterContext("packageReady", "loader=" + System.identityHashCode(primaryLoader));
 
-        splashHooks.installInstrumentationFallback();
-        runtimeDexObserver.install();
+        // Only the attach handoff hook is installed unconditionally. Every
+        // optional hook waits for the startup feature snapshot (BUG-G).
         installApplicationAttachHook();
 
         mainHandler.postDelayed(() -> watchdog(WATCHDOG_RETRY_REASON), WATCHDOG_DELAY_MILLIS);
@@ -136,7 +168,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             Method attach = Application.class.getDeclaredMethod("attach", Context.class);
             HookHandle handle = module.hook(attach)
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .setId("coolapk-application-attach")
+                    .setId(ATTACH_HOOK_ID)
                     .intercept(chain -> {
                         Object result = chain.proceed();
                         Object context = chain.getArg(0);
@@ -148,15 +180,55 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                         return result;
                     });
             bootstrapHandles.add(handle);
+            hookLedger.record(HookLedger.Layer.FRAMEWORK, "coordinator",
+                    ATTACH_HOOK_ID, "Application.attach");
             traceAfterContext("attachHookInstalled", "before attach");
         } catch (Throwable throwable) {
             log.error("Application.attach bootstrap hook install failed", throwable);
         }
     }
 
+    /**
+     * BUG-D: the attach bootstrap hook retires as soon as it is no longer
+     * needed. Release-hardening §4: a failed unhook is NOT retired in the
+     * ledger — the handle stays active/retained and the failure is logged; the
+     * interceptor is already logically inert via the attach handoff claim.
+     */
+    private void retireAttachHook(String reason) {
+        int remaining = 0;
+        synchronized (bootstrapHandles) {
+            java.util.Iterator<HookHandle> iterator = bootstrapHandles.iterator();
+            while (iterator.hasNext()) {
+                HookHandle handle = iterator.next();
+                try {
+                    handle.unhook();
+                    iterator.remove();
+                } catch (Throwable failure) {
+                    remaining++;
+                    log.error("framework bootstrap hook unhook failed id="
+                            + ATTACH_HOOK_ID, failure);
+                }
+            }
+        }
+        if (remaining == 0) {
+            if (hookLedger.retire(ATTACH_HOOK_ID, reason)) {
+                log.info("framework bootstrap hook retired id=" + ATTACH_HOOK_ID
+                        + " reason=" + reason);
+            }
+        } else {
+            log.info("framework bootstrap hook retire deferred id=" + ATTACH_HOOK_ID
+                    + " reason=unhookFailure remaining=" + remaining);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Configuration / topology
+    // ------------------------------------------------------------------
+
     private final Object configLock = new Object();
     private volatile PurifierConfig config;
     private volatile SettingsHooks settingsHooks;
+    private volatile int coolapkMajor;
 
     /**
      * Loads the persisted switches and installs the settings entry. During
@@ -174,15 +246,19 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 if (config == null) {
                     Context candidate = context.getApplicationContext();
                     Context usable = candidate != null ? candidate : context;
-                    int coolapkMajor = readCoolapkMajor(usable);
-                    PurifierConfig loaded = PurifierConfig.load(usable, log);
+                    coolapkMajor = readCoolapkMajor(usable);
+                    PurifierConfig loaded = PurifierConfig.load(
+                            usable, storage.configStore(), log);
                     featureGate.bind(loaded, coolapkMajor);
                     settingsHooks = new SettingsHooks(
-                            module, hookLedger, log, loaded, coolapkMajor);
+                            module, hookLedger, log, loaded,
+                            storage.resolverCacheStore(), coolapkMajor);
                     config = loaded;
                     log.info("configuration initialized coolapkMajor=" + coolapkMajor
                             + " pending=" + loaded.pendingKind()
-                            + " revision=" + loaded.revision());
+                            + " revision=" + loaded.revision()
+                            + " source=" + loaded.loadedSource());
+                    log.info(storage.auditLine());
                 }
             }
         }
@@ -194,25 +270,155 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
     private void onApplicationAttached(Context context, Application application) {
         long start = SystemClock.elapsedRealtime();
+        // §8 handoff transaction: UNCLAIMED → IN_PROGRESS → COMPLETE/FAILED.
+        // Late wrapper/packer attach calls are safe no-ops and never rewrite
+        // coordinator state or reset a terminal READY/DEGRADED.
+        if (!attachHandoff.claim()) {
+            log.info("terminal late callback ignored event=attach state=" + state
+                    + " handoff=" + attachHandoff.state());
+            return;
+        }
+        try {
+            handoffBody(context, application, start);
+            attachHandoff.complete();
+        } catch (Throwable failure) {
+            // §8: a mid-handoff failure must not leave a permanently claimed,
+            // half-initialized process pretending to be fine. The failure is
+            // terminal-degraded (never retried, so no duplicate hooks); safe
+            // state established so far is kept, no new work is submitted to a
+            // shut-down executor (SafeExecutor guards anyway).
+            attachHandoff.fail();
+            dynamicFailureReason = "attachHandoffFailed";
+            log.error("attach handoff failed mid-transaction; degrading handoff="
+                    + attachHandoff.state(), failure);
+            markState(BootstrapState.DEGRADED);
+            cleanupTerminal();
+            maybeScheduleBootstrapRetire();
+        }
+    }
+
+    private void handoffBody(Context context, Application application, long start) {
         Context attached = application != null ? application
                 : context.getApplicationContext() != null
                         ? context.getApplicationContext() : context;
         appContext = attached;
+        storage.attachContext(attached);
         ensureConfiguration(attached);
-        d1DetailSponsorDelta.install(context, context.getClassLoader());
-        d2ReplySponsorReplacement.install(context, context.getClassLoader());
-        d3SameTopicReplacement.install(context, context.getClassLoader());
-        d5TopicDeviceRecommendDelta.install(context, context.getClassLoader());
-        d6AutoCommentDelta.install(context, context.getClassLoader());
-        trace = new BootstrapTrace(appContext);
+        embeddedSplashHost = hasEmbeddedSplashResource(attached)
+                || SplashDecisionResolver.hasEmbeddedHost(context.getClassLoader());
+        log.info("splash embeddedHost=" + embeddedSplashHost
+                + " resource=main_splash_ad fragment="
+                + SplashDecisionResolver.FRAGMENT);
+
+        // Startup hook topology (BUG-G): persisted feature snapshot plus the
+        // validated manifest profile decide what this process installs.
+        TargetManifestRepository repository = TargetManifestRepository.load(
+                TargetManifestRepository.moduleApkSource(moduleInfo), log);
+        long hostVersion = hostVersionCode(attached);
+        String hostVersionName = hostVersionName(attached);
+        TargetProfile profile = repository == null
+                ? null : repository.validatedProfileFor(hostVersion);
+        log.info("manifest schema=" + (repository == null ? "unavailable" : repository.schema())
+                + " hostVersion=" + hostVersionName + "(" + hostVersion + ")"
+                + " profile=" + (repository == null ? "missing"
+                : repository.profileStatus(hostVersion)));
+        topology = new HookTopology(effectiveSnapshot(), profile != null);
+
+        installManifestFeatures(profile, context.getClassLoader());
+
+        if (topology.needsDynamicBootstrap()) {
+            try {
+                if (topology.needsInstrumentationFallback()) {
+                    splashHooks.installInstrumentationFallback();
+                }
+                runtimeDexObserver.install();
+            } catch (Throwable throwable) {
+                log.error("dynamic bootstrap install failed", throwable);
+            }
+        } else {
+            log.info("dynamicBootstrap=skipped reason=noEnabledDynamicFeature");
+        }
+
+        trace = new BootstrapTrace(storage.diagnosticSink());
         trace.mark("attachAfter", "context=" + appContext.getPackageName());
-        cache = new ResolutionCache(appContext);
+        cache = new ResolutionCache(storage.resolverCacheStore());
         recoveryController.attachContext(appContext);
         recoveryController.attachTrace(trace);
-        markState(BootstrapState.WAIT_RUNTIME_DEX);
+        retireAttachHook("handoffComplete");
         log.info("coordinator attachAfter state=" + state
                 + " attachElapsedMs=" + (SystemClock.elapsedRealtime() - start));
+
+        if (!topology.needsDynamicBootstrap()) {
+            // Nothing to resolve: the process is ready with exactly the
+            // manifest/settings hooks its feature snapshot requires.
+            finishReady("noEnabledDynamicFeature");
+            return;
+        }
+        markState(BootstrapState.WAIT_RUNTIME_DEX);
         ensureIdentityAsync();
+    }
+
+    private Map<PurifierConfig.Feature, Boolean> effectiveSnapshot() {
+        EnumMap<PurifierConfig.Feature, Boolean> snapshot =
+                new EnumMap<>(PurifierConfig.Feature.class);
+        PurifierConfig current = config;
+        for (PurifierConfig.Feature feature : PurifierConfig.Feature.values()) {
+            snapshot.put(feature, current != null
+                    ? current.isEffectiveEnabled(feature, coolapkMajor)
+                    : feature.defaultEnabled);
+        }
+        return snapshot;
+    }
+
+    /** Manifest-managed installs: fail-closed, feature-aware, structured. */
+    private void installManifestFeatures(TargetProfile profile, ClassLoader loader) {
+        installManifestFeature(PurifierConfig.Feature.DETAIL_SPONSOR,
+                profile == null ? null : profile.detailSponsor, loader);
+        installManifestFeature(PurifierConfig.Feature.REPLY_SPONSOR,
+                profile == null ? null : profile.replySponsor, loader);
+        installManifestFeature(PurifierConfig.Feature.SAME_TOPIC_FEED,
+                profile == null ? null : profile.sameTopic, loader);
+        installManifestFeature(PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND,
+                profile == null ? null : profile.topicDeviceRecommend, loader);
+        installManifestFeature(PurifierConfig.Feature.AUTO_COMMENT,
+                profile == null ? null : profile.autoComment, loader);
+    }
+
+    private void installManifestFeature(PurifierConfig.Feature feature, Object spec,
+                                        ClassLoader loader) {
+        if (!topology.isEnabledAtStart(feature)) {
+            // Recorded as DISABLED by the topology itself; prove it in logs.
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=DISABLED hookInstalled=false");
+            return;
+        }
+        InstallResult result;
+        if (spec instanceof DetailSponsorTargetSpec) {
+            result = d1DetailSponsorDelta.install((DetailSponsorTargetSpec) spec, loader);
+        } else if (spec instanceof ReplySponsorTargetSpec) {
+            result = d2ReplySponsorReplacement.install((ReplySponsorTargetSpec) spec, loader);
+        } else if (spec instanceof SameTopicTargetSpec) {
+            result = d3SameTopicReplacement.install((SameTopicTargetSpec) spec, loader);
+        } else if (spec instanceof TopicDeviceTargetSpec) {
+            result = d5TopicDeviceRecommendDelta.install((TopicDeviceTargetSpec) spec, loader);
+        } else if (spec instanceof AutoCommentTargetSpec) {
+            result = d6AutoCommentDelta.install((AutoCommentTargetSpec) spec, loader);
+        } else {
+            // Enabled, but no validated profile/target for this host version.
+            result = topology.installResult(feature) != null
+                    ? topology.installResult(feature) : InstallResult.TARGET_MISSING;
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=" + result + " hookInstalled=false");
+        }
+        topology.recordInstallResult(feature, result);
+        if (result == InstallResult.INSTALLED) {
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    HookTopology.businessHookId(feature), "manifest_exact");
+        }
+        log.info("feature=" + feature.key + " source=manifest_exact"
+                + " install=" + result
+                + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.ALREADY_INSTALLED));
     }
 
     // ------------------------------------------------------------------
@@ -279,6 +485,12 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
     @Override
     public void onRuntimeDexReady(String trigger, ClassLoader runtimeClassLoader) {
+        if (state.isTerminal()) {
+            // BUG-D: a late runtime-dex event after READY/DEGRADED must not
+            // resurrect sessions, traces or the observer.
+            log.info("terminal late callback ignored event=runtimeDexReady state=" + state);
+            return;
+        }
         ClassLoader loader = runtimeClassLoader != null ? runtimeClassLoader : primaryLoader;
         long previous = activeRuntimeLoader == null
                 ? -1L : System.identityHashCode(activeRuntimeLoader);
@@ -290,7 +502,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             appContext = currentApplication();
         }
         if (appContext != null && trace == null) {
-            trace = new BootstrapTrace(appContext);
+            trace = new BootstrapTrace(storage.diagnosticSink());
         }
 
         boolean loaderChanged = activeRuntimeLoader != null && activeRuntimeLoader != loader;
@@ -301,7 +513,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             }
             activeRuntimeLoader = loader;
             if (dexKitSession == null && trace != null) {
-                dexKitSession = new DexKitSession(log, trace, activeRuntimeLoader);
+                dexKitSession = new DexKitSession(log, trace, activeRuntimeLoader,
+                        sessionContext());
                 dexKitSession.notifyLoaderGenerationChanged(
                         loaderChanged ? "runtimeLoaderChanged" : "initial");
             }
@@ -350,13 +563,19 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         if (state == BootstrapState.READY || state == BootstrapState.DEGRADED) {
             return;
         }
+        HookTopology current = topology;
+        if (current != null && !current.needsDynamicBootstrap()) {
+            return;
+        }
         if (!sessionRunning.compareAndSet(false, true)) {
             log.info("coordinator session already running trigger=" + trigger);
             return;
         }
         int attempt = ++sessionAttempt;
         traceAfterContext("sessionStart", "trigger=" + trigger + " attempt=" + attempt);
-        worker.execute(() -> {
+        // BUG-D: a terminal-state cleanup may race a late callback; the
+        // shut-down worker must never surface as an exception.
+        if (!SafeExecutor.tryExecute(worker, () -> {
             try {
                 runSession(trigger, attempt);
             } catch (Throwable throwable) {
@@ -364,12 +583,17 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 traceAfterContext("sessionError", "trigger=" + trigger
                         + " error=" + throwable
                         + " stack=" + android.util.Log.getStackTraceString(throwable));
+                dynamicFailureReason = "sessionError";
                 markState(BootstrapState.DEGRADED);
                 cleanupTerminal();
             } finally {
                 sessionRunning.set(false);
             }
-        });
+        })) {
+            sessionRunning.set(false);
+            log.info("terminal late callback ignored event=triggerSession"
+                    + " reason=executorShutdown trigger=" + trigger);
+        }
     }
 
     private void runSession(String trigger, int attempt) {
@@ -381,10 +605,10 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             }
         }
         if (trace == null) {
-            trace = new BootstrapTrace(appContext);
+            trace = new BootstrapTrace(storage.diagnosticSink());
         }
         if (cache == null) {
-            cache = new ResolutionCache(appContext);
+            cache = new ResolutionCache(storage.resolverCacheStore());
             recoveryController.attachContext(appContext);
             recoveryController.attachTrace(trace);
         }
@@ -396,10 +620,12 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             log.info("coordinator stable identity: " + identity.describe());
         }
 
-        Map<String, ResolvedTarget> cached = cache.loadTargets(identity);
+        ResolutionCache.CacheLookup lookup = cache.lookup(identity);
         trace.mark("cacheLookupStart", "attempt=" + attempt + " trigger=" + trigger);
-        Map<String, ResolvedTarget> verified = verifyCacheTargets(cached);
-        if (!verified.isEmpty()) {
+        Map<String, ResolvedTarget> verified = verifyCacheTargets(lookup.targets);
+        if (!verified.isEmpty() && !state.isTerminal()) {
+            // A deadline/terminal state racing this session must not let stale
+            // results install hooks (release-hardening §3.3).
             applyTargets(verified, "cache");
         }
         if (isCoreReady() && isCoverageSettled()) {
@@ -410,7 +636,17 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             finishReady("cache");
             return;
         }
-        trace.mark("cacheMiss", "verified=" + verified.size() + " total=" + cached.size()
+        // Structured miss diagnostics (BUG-C): distinguish "no cache" from
+        // "cache rejected" and from "hit but coverage/verification failed".
+        String missReason = !lookup.isHit() ? lookup.missReason
+                : verified.isEmpty() && !lookup.targets.isEmpty()
+                        ? "targetVerifyFailed" : "coverageUnsettled";
+        trace.mark("cacheMiss", "reason=" + missReason
+                + " verified=" + verified.size() + " total=" + lookup.totalEntries
+                + " trigger=" + trigger);
+        log.info("resolver path=cache hit=false reason=" + missReason
+                + " identity=" + identity.shortToken()
+                + " verified=" + verified.size() + " total=" + lookup.totalEntries
                 + " trigger=" + trigger);
 
         DexKitSession session = ensureSession(trigger);
@@ -426,7 +662,44 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             // DEX list instead of reusing the stale one.
             session.notifyLoaderGenerationChanged("incompleteRetryRescan");
         }
-        org.luckypray.dexkit.DexKitBridge bridge = session.ensureBridge(trigger);
+        if (!session.beginQuery()) {
+            log.info("resolver session aborted reason=sessionClosing trigger=" + trigger);
+            return;
+        }
+        try {
+            runDexKitTransaction(trigger, session, verified);
+        } finally {
+            session.endQuery();
+        }
+    }
+
+    /**
+     * The resolver worker's exclusive bridge transaction (release-hardening
+     * §3): native queries and the physical bridge close never run
+     * concurrently, and results produced after a logical close / loader
+     * change / terminal state are discarded instead of installing hooks,
+     * saving cache entries or rewriting the state machine.
+     */
+    private void runDexKitTransaction(String trigger, DexKitSession session,
+                                      Map<String, ResolvedTarget> verified) {
+        org.luckypray.dexkit.DexKitBridge bridge;
+        try {
+            bridge = session.ensureBridge(trigger);
+        } catch (DexKitNativeLoader.LoadFailure failure) {
+            // BUG-E: permanent native bootstrap failure. Sticky for the whole
+            // process, classified once; a cache miss can never recover from it
+            // in-process, so degrade safely with a single root cause instead
+            // of repeating the deterministically failing load every session.
+            traceAfterContext("nativeBootstrapPermanentFailure",
+                    "trigger=" + trigger + " classification=" + DexKitNativeLoader.FAILURE_REASON);
+            log.info("resolver nativeBootstrap=permanentFailure safeDegraded=true"
+                    + " trigger=" + trigger + " stage=" + failure.stage);
+            dynamicFailureReason = "nativeBootstrapFailed";
+            markState(BootstrapState.DEGRADED);
+            cleanupTerminal();
+            maybeScheduleBootstrapRetire();
+            return;
+        }
         if (bridge == null || !bridge.isValid()) {
             markState(BootstrapState.WAIT_RUNTIME_DEX);
             log.info("resolver bridge unavailable state=WAIT_RUNTIME_DEX trigger=" + trigger);
@@ -439,32 +712,80 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         // Only reachable after a cache miss / invalid cache. Cache-hit runs
         // return earlier, so the Toast is never shown on cache hits.
         firstAdaptationToast.showOnce(appContext);
-        markState(BootstrapState.SPLASH_CRITICAL);
-        trace.mark("splashResolveStart", "trigger=" + trigger);
-        List<ResolvedTarget> splashes = new SplashCriticalResolver(bridge, loader, log).resolve();
-        trace.mark("splashResolveEnd", "candidates=" + splashes.size());
-        if (!splashes.isEmpty()) {
-            Map<String, ResolvedTarget> splashTargets = new LinkedHashMap<>();
-            for (int i = 0; i < splashes.size(); i++) {
-                String key = TargetResolver.indexedKey(TargetResolver.KEY_SPLASH_BASE, i);
-                splashTargets.put(key, splashes.get(i).withKey(key));
+        boolean needsSplash = topology == null || topology.needsSplash();
+        boolean needsFeed = topology == null || topology.needsFeed();
+
+        if (needsSplash) {
+            markState(BootstrapState.SPLASH_CRITICAL);
+            trace.mark("splashResolveStart", "trigger=" + trigger);
+            List<ResolvedTarget> splashes =
+                    new SplashCriticalResolver(bridge, loader, log).resolve();
+            trace.mark("splashResolveEnd", "candidates=" + splashes.size());
+            if (!splashes.isEmpty()) {
+                Map<String, ResolvedTarget> splashTargets = new LinkedHashMap<>();
+                for (int i = 0; i < splashes.size(); i++) {
+                    String key = TargetResolver.indexedKey(TargetResolver.KEY_SPLASH_BASE, i);
+                    splashTargets.put(key, splashes.get(i).withKey(key));
+                }
+                if (isSessionUsable(session)) {
+                    applyTargets(splashTargets, "dexkit");
+                } else {
+                    log.info("resolver results discarded reason=sessionInvalidated"
+                            + " stage=splash trigger=" + trigger);
+                    return;
+                }
+            } else {
+                markState(BootstrapState.WAIT_RUNTIME_DEX);
+                rearmObserverForRetry();
+                log.info("resolver splash retryable state=WAIT_RUNTIME_DEX"
+                        + " reason=zeroOrUnverifiableCandidates trigger=" + trigger);
             }
-            applyTargets(splashTargets, "dexkit");
-        } else {
-            markState(BootstrapState.WAIT_RUNTIME_DEX);
-            rearmObserverForRetry();
-            log.info("resolver splash retryable state=WAIT_RUNTIME_DEX"
-                    + " reason=zeroOrUnverifiableCandidates trigger=" + trigger);
+
+            if (embeddedSplashHost) {
+                ResolvedTarget decision =
+                        SplashDecisionResolver.resolve(bridge, loader, log);
+                if (decision != null) {
+                    Map<String, ResolvedTarget> decisionTarget = new LinkedHashMap<>();
+                    decisionTarget.put(TargetResolver.KEY_SPLASH_DECISION, decision);
+                    if (isSessionUsable(session)) {
+                        applyTargets(decisionTarget, "dexkit-splash-decision");
+                    } else {
+                        log.info("resolver results discarded reason=sessionInvalidated"
+                                + " stage=splashDecision trigger=" + trigger);
+                        return;
+                    }
+                } else {
+                    log.info("splash decision unavailable embeddedHost=true coverage=PARTIAL");
+                }
+            }
         }
 
-        markState(BootstrapState.FULL_RESOLVE);
-        trace.mark("normalResolveStart", "trigger=" + trigger);
-        Map<String, ResolvedTarget> normal = new NormalResolver(bridge, loader, log).resolve();
-        trace.mark("normalResolveEnd", "targets=" + normal.keySet());
-        applyTargets(normal, "dexkit");
+        if (needsFeed) {
+            markState(BootstrapState.FULL_RESOLVE);
+            trace.mark("normalResolveStart", "trigger=" + trigger);
+            Map<String, ResolvedTarget> normal =
+                    new NormalResolver(bridge, loader, log).resolve();
+            trace.mark("normalResolveEnd", "targets=" + normal.keySet());
+            if (isSessionUsable(session)) {
+                applyTargets(normal, "dexkit");
+            } else {
+                log.info("resolver results discarded reason=sessionInvalidated"
+                        + " stage=feed trigger=" + trigger);
+                return;
+            }
+        }
 
-        Map<String, ResolvedTarget> all = currentTargets();
+        if (!isSessionUsable(session)) {
+            log.info("resolver results discarded reason=sessionInvalidated"
+                    + " stage=save trigger=" + trigger);
+            return;
+        }
+        Map<String, ResolvedTarget> all = TargetApplicability.mergeForSave(
+                currentTargets(), verified, topology);
         if (!all.isEmpty()) {
+            // Targets of features disabled at start stay in the cache (they
+            // were verified but not applicable now) so a later process with a
+            // different topology can still hit them.
             cache.saveTargets(identity, all);
             trace.mark("cacheSaved", "entries=" + all.size() + " identity=" + identity.shortToken());
         }
@@ -499,7 +820,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 // accessors). Also deterministically retried: observer
                 // re-armed here, 8s watchdog retries FULL_RESOLVE too.
                 rearmObserverForRetry();
-                if (isSplashReady()) {
+                if (isSplashReady() || !needsSplash) {
                     markState(BootstrapState.FULL_RESOLVE);
                     log.info("resolver splashReady coreIncomplete state=FULL_RESOLVE"
                             + " trigger=" + trigger);
@@ -512,6 +833,16 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         }
 
         maybeRecoverAfterSplashResolved();
+    }
+
+    /**
+     * True while this transaction's results may still take effect: the
+     * coordinator is not terminal, the session is still the current one and
+     * no logical close was requested by another thread.
+     */
+    private boolean isSessionUsable(DexKitSession session) {
+        return !state.isTerminal() && dexKitSession == session
+                && !session.isCloseRequested();
     }
 
     private Map<String, ResolvedTarget> verifyCacheTargets(Map<String, ResolvedTarget> cached) {
@@ -542,13 +873,18 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
     private DexKitSession ensureSession(String trigger) {
         if (trace == null) {
-            trace = new BootstrapTrace(appContext);
+            trace = new BootstrapTrace(storage.diagnosticSink());
         }
         if (dexKitSession == null) {
-            dexKitSession = new DexKitSession(log, trace, resolveLoader());
+            dexKitSession = new DexKitSession(log, trace, resolveLoader(), sessionContext());
             dexKitSession.notifyLoaderGenerationChanged("sessionCreated:" + trigger);
         }
         return dexKitSession;
+    }
+
+    private Context sessionContext() {
+        Context context = appContext;
+        return context != null ? context : currentApplication();
     }
 
     private ClassLoader resolveLoader() {
@@ -559,8 +895,11 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private void closeSession(String reason) {
         DexKitSession session = dexKitSession;
         if (session != null) {
-            session.close();
-            traceAfterContext("bridgeClosed", "reason=" + reason
+            // Release-hardening §3: this thread only publishes the logical
+            // close; the resolver worker's transaction performs the physical
+            // bridge close exactly once when its native queries are done.
+            session.requestClose(reason);
+            traceAfterContext("bridgeCloseRequested", "reason=" + reason
                     + " generation=" + session.getGeneration());
         }
         dexKitSession = null;
@@ -571,69 +910,81 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             return;
         }
         ClassLoader loader = resolveLoader();
+        // Release-hardening §2: a feature disabled at process start never gets
+        // its business hooks — from a cache hit exactly as from a fresh DexKit
+        // resolution. This filter is the single topology choke point.
+        Map<String, ResolvedTarget> applicable = TargetApplicability.filter(targets, topology);
+        if (applicable.size() != targets.size()) {
+            List<String> dropped = new java.util.ArrayList<>();
+            for (String key : targets.keySet()) {
+                if (!applicable.containsKey(key)) {
+                    dropped.add(key);
+                }
+            }
+            log.info("topology filtered dynamic targets source=" + source
+                    + " kept=" + applicable.keySet() + " dropped=" + dropped);
+        }
+        if (applicable.isEmpty()) {
+            return;
+        }
         Map<String, ResolvedTarget> merged;
         synchronized (resolvedTargets) {
             // Descriptor-stable merge: an existing descriptor keeps its key,
             // so candidate order changes across sessions can never overwrite
-            // an unrelated persisted entry.
-            TargetResolver.mergeTargets(resolvedTargets, targets);
+            // an unrelated cached entry.
+            TargetResolver.mergeTargets(resolvedTargets, applicable);
             merged = new LinkedHashMap<>(resolvedTargets);
         }
-        // Accessors must be rebuilt from the COMPLETE merged target map: an
-        // earlier splash-only increment used to wipe the already verified
-        // getters and fail the classifier closed for the first feed batches.
-        entityListHooks.updateAccessors(merged, loader);
-
-        for (Map.Entry<String, ResolvedTarget> entry : targets.entrySet()) {
-            if (!TargetResolver.isFeedKey(entry.getKey())) {
-                continue;
-            }
-            ResolvedTarget feed = entry.getValue();
-            Method method = DescriptorUtils.methodForDescriptor(feed.methodDescriptor, loader);
-            if (method != null) {
-                entityListHooks.install(method);
-            } else {
-                log.info("feed descriptor not loadable source=" + source
-                        + " key=" + entry.getKey() + " target=" + feed.describe());
-            }
-        }
+        DynamicTargetApplier.Outcome outcome = DynamicTargetApplier.apply(
+                applicable, merged, loader, applierSink, log, source);
         if (entityListHooks.hookedMethodCount() > 0) {
             log.info("installed feed hooks source=" + source
                     + " total=" + entityListHooks.hookedMethodCount());
         }
-
-        for (Map.Entry<String, ResolvedTarget> entry : targets.entrySet()) {
-            if (!TargetResolver.isSplashKey(entry.getKey())) {
-                continue;
-            }
-            ResolvedTarget splash = entry.getValue();
-            try {
-                Class<?> type = DescriptorUtils.classForName(splash.classDescriptor, loader);
-                if (type == null) {
-                    log.info("splash descriptor not loadable source=" + source
-                            + " target=" + splash.describe());
-                    continue;
-                }
-                splashGate.addResolvedSplashClass(type);
-                boolean installed = splashHooks.installSpecific(type);
-                if (installed) {
-                    installedSplashClasses.add(type.getName());
-                    traceAfterContext("splashHookInstalled", splash.describe()
-                            + " installed=true source=" + source);
-                    log.info("installed splash hook source=" + source
-                            + " class=" + type.getName());
-                } else {
-                    traceAfterContext("splashHookInstallFailed", splash.describe()
-                            + " source=" + source);
-                    log.info("splash specific hook not installed source=" + source
-                            + " class=" + type.getName() + " frameworkFallback=true");
-                }
-            } catch (Throwable throwable) {
-                log.info("splash descriptor not loadable yet source=" + source
-                        + " target=" + splash.describe());
-            }
+        for (String className : outcome.splashInstalled) {
+            installedSplashClasses.add(className);
+            traceAfterContext("splashHookInstalled", "class=" + className
+                    + " installed=true source=" + source);
+            log.info("installed splash hook source=" + source + " class=" + className);
+        }
+        for (String className : outcome.splashUnresolved) {
+            traceAfterContext("splashHookInstallFailed", "class=" + className
+                    + " source=" + source);
+        }
+        if (outcome.splashDecisionInstalled) {
+            traceAfterContext("splashDecisionHookInstalled",
+                    "installed=true source=" + source);
+            log.info("installed splash decision hook source=" + source);
         }
     }
+
+    private final DynamicTargetApplier.Sink applierSink = new DynamicTargetApplier.Sink() {
+        @Override
+        public void updateAccessors(Map<String, ResolvedTarget> merged, ClassLoader loader) {
+            entityListHooks.updateAccessors(merged, loader);
+        }
+
+        @Override
+        public boolean installFeed(Method method, ResolvedTarget target) {
+            return entityListHooks.install(method) > 0;
+        }
+
+        @Override
+        public void addSplashGateClass(Class<?> type) {
+            splashGate.addResolvedSplashClass(type);
+        }
+
+        @Override
+        public boolean installSplash(Class<?> type, ResolvedTarget target) {
+            return splashHooks.installSpecific(type);
+        }
+
+        @Override
+        public boolean installSplashDecision(Method method, ResolvedTarget target) {
+            return splashDecisionHooks.install(target, method.getDeclaringClass().getClassLoader(),
+                    () -> featureGate.isEffectiveEnabled(PurifierConfig.Feature.SPLASH));
+        }
+    };
 
     private Map<String, ResolvedTarget> currentTargets() {
         synchronized (resolvedTargets) {
@@ -642,18 +993,32 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     }
 
     private boolean isSplashReady() {
-        return !installedSplashClasses.isEmpty();
+        return SplashDecisionPolicy.ready(
+                !installedSplashClasses.isEmpty(),
+                embeddedSplashHost,
+                splashDecisionHooks.isInstalled());
     }
 
-    /** Core ad-filtering capability: splash covered, live feed hooks, accessors complete. */
+    /**
+     * Core capability, feature-aware (BUG-G): a feature that is disabled at
+     * startup never blocks readiness.
+     */
     private boolean isCoreReady() {
-        return ReadinessPolicy.isCoreReady(isSplashReady(),
-                entityListHooks.hookedMethodCount(),
-                entityListHooks.isAccessorsComplete());
+        HookTopology current = topology;
+        boolean splashOk = current == null || !current.needsSplash() || isSplashReady();
+        boolean feedOk = current == null || !current.needsFeed()
+                || ReadinessPolicy.isCoreReady(true,
+                        entityListHooks.hookedMethodCount(),
+                        entityListHooks.isAccessorsComplete());
+        return splashOk && feedOk;
     }
 
     /** Feed coverage converged by anchor classes (see {@link ReadinessPolicy}). */
     private boolean isCoverageSettled() {
+        HookTopology current = topology;
+        if (current != null && !current.needsFeed()) {
+            return true;
+        }
         return ReadinessPolicy.isCoverageSettledByAnchors(
                 entityListHooks.hasHookedInClass(ANCHOR_AD_HELPER_DESCRIPTOR),
                 entityListHooks.hasHookedInClass(ANCHOR_ENTITY_LIST_FRAGMENT_DESCRIPTOR));
@@ -670,39 +1035,90 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     }
 
     /**
-     * Event-driven retire. No polling. If the current call is inside the
-     * Instrumentation interceptor, retirement is posted to the next main
-     * thread message to avoid self-unhook races.
+     * Event-driven retire. No polling. Retirement uses one short main-thread
+     * delay so libxposed is outside the Instrumentation interception stack on
+     * cache-hit cold starts before the physical unhook runs.
      */
     private void maybeScheduleBootstrapRetire() {
         if (bootstrapRetired.get()) {
             return;
         }
-        if (BootstrapRetirePolicy.canRetire(
-                state, splashGate.isMainActivitySeen(), isSplashReady())) {
-            mainHandler.post(this::retireBootstrap);
+        if (shouldRetireFramework()) {
+            mainHandler.postDelayed(this::retireBootstrap,
+                    BOOTSTRAP_RETIRE_DELAY_MILLIS);
         }
     }
 
+    private boolean shouldRetireFramework() {
+        if (!state.isTerminal()) {
+            return false;
+        }
+        HookTopology current = topology;
+        if (current == null) {
+            return false;
+        }
+        if (!current.needsInstrumentationFallback()) {
+            // No splash safety net exists in this topology; nothing gates
+            // retirement on MainActivity visibility.
+            return true;
+        }
+        return BootstrapRetirePolicy.canRetire(
+                state, splashGate.isMainActivitySeen(), isSplashReady());
+    }
+
     private void retireBootstrap() {
-        if (!BootstrapRetirePolicy.canRetire(
-                state, splashGate.isMainActivitySeen(), isSplashReady())) {
+        if (!shouldRetireFramework()) {
             return;
         }
         if (!bootstrapRetired.compareAndSet(false, true)) {
             return;
         }
         BootstrapTrace current = trace;
-        if (current != null) {
-            current.freeze("terminalState",
-                    "state=" + state + " bootstrapRetired=true traceFrozen=true"
-                            + " elapsedMs=" + current.elapsedSinceStart());
+        HookTopology currentTopology = topology;
+        try {
+            if (current != null) {
+                current.freeze("terminalState",
+                        "state=" + state
+                                + " bootstrapRetireAttempted=true traceFrozen=true"
+                                + " elapsedMs=" + current.elapsedSinceStart());
+            }
+            retireAttachHook("terminalState");
+            if (splashHooks.isBootstrapInstalled()) {
+                boolean cleanReady = state == BootstrapState.READY;
+                boolean splashCovered = currentTopology == null
+                        || !currentTopology.needsSplash() || isSplashReady();
+                if (cleanReady || splashCovered) {
+                    // BUG-F: the broad framework hook genuinely retires once
+                    // specific/business coverage makes it unnecessary.
+                    splashHooks.unhookBootstrap("coverageSettled:" + state);
+                    boolean physicallyRetired = !splashHooks.isBootstrapInstalled();
+                    log.info("framework bootstrap hook retirement"
+                            + " id=instrumentation-callActivityOnCreate state=" + state
+                            + " physicallyRetired=" + physicallyRetired);
+                } else {
+                    // Deliberate DEGRADED fallback: SPLASH is enabled but no
+                    // specific splash coverage could be established.
+                    splashHooks.retireBootstrapCallbacks();
+                    log.info("framework fallback retained"
+                            + " reason=splashSpecificCoverageMissing state=" + state);
+                }
+            }
+        } catch (Throwable failure) {
+            log.error("framework bootstrap retirement failed state=" + state, failure);
+        } finally {
+            // The final state must remain observable even if an unexpected
+            // retirement-path diagnostic or framework call fails.
+            log.info(hookLedger.summaryLine("terminal:" + state));
+            if (currentTopology != null) {
+                log.info(currentTopology.summaryLine(hookLedger));
+            }
+            log.info(dynamicTrustedSummaryLine("postRetirement"));
+            log.info(exposureLedger.summaryLine("postRetirement:" + state));
+            log.info(storage.auditLine());
+            log.info("coordinator bootstrapRetireAttempted=true state=" + state
+                    + " frameworkHooksRetired=" + !hookLedger.hasActiveFrameworkHooks()
+                    + " traceFrozen=" + (current != null && current.isFrozen()));
         }
-        // Passive mode: coordinator callbacks stop, but the Instrumentation
-        // splash safety net itself is retained for the process lifetime.
-        splashHooks.retireBootstrapCallbacks();
-        log.info("coordinator bootstrapRetired=true state=" + state
-                + " traceFrozen=" + (current != null && current.isFrozen()));
     }
 
     private void cleanupTerminal() {
@@ -715,9 +1131,54 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         mainHandler.removeCallbacksAndMessages(null);
         runtimeDexObserver.close();
         closeSession("terminal");
+        retireAttachHook("terminalCleanup");
         worker.shutdown();
+        // §7/§10A.6: the terminal summary must distinguish manifest-exact and
+        // dynamic-trusted availability, machine-readable, even when the
+        // bootstrap retire never runs (e.g. retained splash fallback).
+        HookTopology currentTopology = topology;
+        if (currentTopology != null) {
+            log.info(currentTopology.summaryLine(hookLedger));
+        }
+        log.info(dynamicTrustedSummaryLine("terminalCleanup"));
+        log.info(exposureLedger.summaryLine("terminal:" + state));
+        log.info(storage.auditLine());
         log.info("coordinator bootstrap lifecycle retired executorShutdown=true"
                 + " watcherUnhooked=true");
+    }
+
+    /**
+     * §10A.6 machine-readable dynamic-feature terminal status. An enabled
+     * dynamic feature that could not establish real coverage reports
+     * UNAVAILABLE with a root cause — never a bare "enabled=true" that could
+     * be misread as healthy while the process is DEGRADED.
+     */
+    private String dynamicTrustedSummaryLine(String phase) {
+        HookTopology current = topology;
+        boolean splashEnabled = current != null && current.needsSplash();
+        boolean feedEnabled = current != null && current.needsFeed();
+        boolean fallbackRequired = current != null
+                && current.needsInstrumentationFallback();
+        boolean instrumentationHookPresent = splashHooks.isBootstrapInstalled();
+        boolean retirePending = state.isTerminal()
+                && instrumentationHookPresent
+                && shouldRetireFramework()
+                && !bootstrapRetired.get();
+        return DynamicTrustedStatus.summaryLine(
+                state,
+                splashEnabled,
+                fallbackRequired,
+                !installedSplashClasses.isEmpty(),
+                splashEnabled && embeddedSplashHost,
+                splashDecisionHooks.isInstalled(),
+                instrumentationHookPresent,
+                retirePending,
+                feedEnabled,
+                entityListHooks.hookedMethodCount(),
+                entityListHooks.isAccessorsComplete(),
+                isCoverageSettled(),
+                dynamicFailureReason,
+                phase);
     }
 
     private void maybeRecoverAfterSplashResolved() {
@@ -727,8 +1188,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         if (cache == null || identity == null) {
             return;
         }
-        Map<String, ResolvedTarget> persisted = cache.loadTargets(identity);
-        ResolvedTarget splash = persisted.get(TargetResolver.KEY_SPLASH_BASE);
+        Map<String, ResolvedTarget> cached = cache.loadTargets(identity);
+        ResolvedTarget splash = cached.get(TargetResolver.KEY_SPLASH_BASE);
         if (splash == null || TargetVerifier.verify(splash, resolveLoader()) != null) {
             log.info("recovery skipped reason=cacheVerificationFailed");
             return;
@@ -739,19 +1200,24 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     }
 
     private void watchdog(String reason) {
-        traceAfterContext("watchdog", reason);
-        log.info("coordinator watchdog fired reason=" + reason + " state=" + state);
-        if (state == BootstrapState.READY) {
+        if (state.isTerminal()) {
+            // BUG-D: a deadline queued before termination must not resurrect
+            // sessions or rewrite the terminal state.
+            if (WATCHDOG_DEADLINE_REASON.equals(reason)) {
+                log.info("terminal late callback ignored event=watchdogDeadline"
+                        + " state=" + state);
+            }
             return;
         }
+        traceAfterContext("watchdog", reason);
+        log.info("coordinator watchdog fired reason=" + reason + " state=" + state);
         if (WATCHDOG_DEADLINE_REASON.equals(reason)) {
             // Deadline semantics take precedence over ANY intermediate state:
             // a process stuck in WAIT_RUNTIME_DEX/CACHE_VERIFY/... at 20s must
             // still terminate here instead of returning early and suspending
             // forever. Coverage settles by definition at the deadline, so a
             // core-ready process finishes READY; a core-incapable one is
-            // DEGRADED. The passive Instrumentation splash safety net is
-            // retained in both cases (SplashHooks are never unhooked).
+            // DEGRADED.
             boolean coreReady = isCoreReady();
             BootstrapState terminal = ReadinessPolicy.deadlineTerminalState(coreReady);
             log.info("resolver watchdog deadline intermediateState=" + state
@@ -759,11 +1225,11 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             if (terminal == BootstrapState.READY) {
                 finishReady("deadline");
             } else {
+                dynamicFailureReason = "watchdogDeadline";
                 markState(BootstrapState.DEGRADED);
                 cleanupTerminal();
                 maybeScheduleBootstrapRetire();
-                log.info("resolver watchdog deadline state=DEGRADED"
-                        + " passiveSplashNet=retained");
+                log.info("resolver watchdog deadline state=DEGRADED");
             }
             return;
         }
@@ -778,10 +1244,14 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         }
     }
 
+    /**
+     * BUG-D: terminal states are strictly monotonic. Once READY or DEGRADED
+     * is reached, no late callback may move the state anywhere — not even to
+     * the other terminal state.
+     */
     private void markState(BootstrapState next) {
         synchronized (stateLock) {
-            if (state.isTerminal() && next != BootstrapState.READY
-                    && next != BootstrapState.DEGRADED) {
+            if (state.isTerminal()) {
                 return;
             }
             if (state != next) {
@@ -800,7 +1270,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     }
 
     private void ensureIdentityAsync() {
-        worker.execute(() -> {
+        if (!SafeExecutor.tryExecute(worker, () -> {
             if (identity != null || appContext == null) {
                 return;
             }
@@ -809,7 +1279,10 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 trace.mark("stableIdentityComputed", identity.describe());
             }
             log.info("coordinator stable identity: " + identity.describe());
-        });
+        })) {
+            log.info("terminal late callback ignored event=identityAsync"
+                    + " reason=executorShutdown");
+        }
     }
 
     private static int readCoolapkMajor(Context context) {
@@ -825,6 +1298,38 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             return Integer.parseInt(major.replaceAll("[^0-9]", ""));
         } catch (Throwable ignored) {
             return 0;
+        }
+    }
+
+    /** Exact resource capability for the MainActivity-hosted splash container. */
+    @android.annotation.SuppressLint("DiscouragedApi")
+    private static boolean hasEmbeddedSplashResource(Context context) {
+        try {
+            return context.getResources().getIdentifier(
+                    "main_splash_ad", "id", CoolapkModule.TARGET_PACKAGE) != 0;
+        } catch (Throwable ignored) {
+            // Class capability below remains an independent conservative signal.
+            return false;
+        }
+    }
+
+    private static long hostVersionCode(Context context) {
+        try {
+            return context.getPackageManager()
+                    .getPackageInfo(CoolapkModule.TARGET_PACKAGE, 0)
+                    .getLongVersionCode();
+        } catch (Throwable ignored) {
+            return -1L;
+        }
+    }
+
+    private static String hostVersionName(Context context) {
+        try {
+            String versionName = context.getPackageManager()
+                    .getPackageInfo(CoolapkModule.TARGET_PACKAGE, 0).versionName;
+            return versionName == null ? "unknown" : versionName;
+        } catch (Throwable ignored) {
+            return "unknown";
         }
     }
 

@@ -14,18 +14,32 @@ import org.junit.Test;
 
 public final class D1DetailSponsorDeltaTest {
     @Test
-    public void acceptsOnlyPinnedHostVersion() {
-        assertTrue(D1DetailSponsorDelta.isExactHostVersion(2_608_212L));
-        assertFalse(D1DetailSponsorDelta.isExactHostVersion(2_608_211L));
+    public void manifestSpecMatchesBaselineDescriptor() {
+        DetailSponsorTargetSpec spec = TestManifests.profile().detailSponsor;
+        org.junit.Assert.assertEquals("Lcom/coolapk/market/model/$$AutoValue_Feed;->"
+                        + "getDetailSponsorCard()Lcom/coolapk/market/model/Entity;",
+                spec.descriptor());
     }
 
     @Test
     public void acceptsExactConcreteGetter() throws Exception {
+        DetailSponsorTargetSpec spec = TestManifests.profile().detailSponsor;
         Method exact = $$AutoValue_Feed.class.getDeclaredMethod("getDetailSponsorCard");
         Method wrongOwner = WrongOwner.class.getDeclaredMethod("getDetailSponsorCard");
 
-        assertTrue(D1DetailSponsorDelta.isExactTarget(exact));
-        assertFalse(D1DetailSponsorDelta.isExactTarget(wrongOwner));
+        assertTrue(D1DetailSponsorDelta.isExactTarget(spec, exact));
+        assertFalse(D1DetailSponsorDelta.isExactTarget(spec, wrongOwner));
+    }
+
+    @Test
+    public void tamperedSpecNeverVerifies() throws Exception {
+        org.json.JSONObject json = new org.json.JSONObject()
+                .put("ownerClass", "com.coolapk.market.model.Entity")
+                .put("methodName", "getDetailSponsorCard")
+                .put("returnType", "com.coolapk.market.model.Entity");
+        DetailSponsorTargetSpec tampered = DetailSponsorTargetSpec.parse(json);
+        Method exact = $$AutoValue_Feed.class.getDeclaredMethod("getDetailSponsorCard");
+        assertFalse(D1DetailSponsorDelta.isExactTarget(tampered, exact));
     }
 
     @Test

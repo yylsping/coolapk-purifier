@@ -1,24 +1,18 @@
 package io.github.yylsping.coolapkpurifier;
 
-import android.content.Context;
 import android.os.SystemClock;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 
 /** Monotonic-clock startup trace, frozen permanently after bootstrap ends. */
 final class BootstrapTrace {
-    private static final long MAX_BYTES = 256L * 1024L;
-
-    private final File file;
+    private final DiagnosticSink sink;
     private final long startRealtime = SystemClock.elapsedRealtime();
     private final TraceGate gate = new TraceGate();
 
-    BootstrapTrace(Context appContext) {
-        this.file = new File(appContext.getFilesDir(), "coolapk_purifier_bootstrap.log");
+    BootstrapTrace(DiagnosticSink sink) {
+        this.sink = sink;
     }
 
     boolean isFrozen() {
@@ -36,7 +30,7 @@ final class BootstrapTrace {
         writeLine(event, detail);
     }
 
-    /** Writes one final terminal line, then freezes all future file I/O. */
+    /** Records one final terminal line, then freezes all future diagnostics. */
     synchronized void freeze(String event, String detail) {
         if (gate.isFrozen()) {
             return;
@@ -50,21 +44,13 @@ final class BootstrapTrace {
         String line = String.format(Locale.US,
                 "rel=%6dms evt=%-22s %s%n", now - startRealtime, event, detail);
         try {
-            if (file.isFile() && file.length() > MAX_BYTES) {
-                // Keep the most recent startup trace only. Diagnostics must
-                // never grow without bound.
-                File old = new File(file.getParentFile(), file.getName() + ".old");
-                if (old.exists()) {
-                    //noinspection ResultOfMethodCallIgnored
-                    old.delete();
-                }
-                //noinspection ResultOfMethodCallIgnored
-                file.renameTo(old);
-            }
-            try (OutputStream out = new FileOutputStream(file, true)) {
-                out.write(line.getBytes(StandardCharsets.UTF_8));
-            }
+            sink.record(line);
         } catch (Throwable ignored) {
+            // Diagnostics must never affect host behavior.
         }
+    }
+
+    List<String> snapshot() {
+        return sink.snapshot();
     }
 }

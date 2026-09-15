@@ -10,8 +10,8 @@
     *;
 }
 
-# DexKit is loaded from a dynamically extracted native library. Keep all of
-# its descriptors because JNI registration and FlatBuffers query classes are
+# DexKit is loaded from the framework-owned installed native library. Keep
+# all descriptors because JNI registration and FlatBuffers query classes are
 # referenced reflectively/natively.
 -keep class org.luckypray.dexkit.** { *; }
 -keep class com.google.flatbuffers.** { *; }

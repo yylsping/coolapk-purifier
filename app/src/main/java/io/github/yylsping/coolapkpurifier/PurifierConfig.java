@@ -10,13 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
 
-/**
- * User configuration stored in Coolapk's own files directory.
- *
- * <p>The three legacy protections default to enabled. Issue #2 switches
- * default to disabled and are only effective on Coolapk 15.x and newer. Every
- * change is atomically persisted before the UI reports it as accepted.</p>
- */
+/** Seven-feature configuration with a framework/module-owned authoritative store. */
 final class PurifierConfig {
     static final String FILE_NAME = "coolapk_purifier_config.json";
     private static final int SCHEMA = 1;
@@ -66,30 +60,30 @@ final class PurifierConfig {
         }
     }
 
-    private final File file;
-    private final CacheAtomicWriter.ReplaceOperation replaceOperation;
+    interface LegacySource {
+        byte[] read();
+        String description();
+    }
+
+    private final ConfigStore store;
+    private final LegacySource legacySource;
     private final ModuleLog log;
     private final EnumMap<Feature, Boolean> enabled = new EnumMap<>(Feature.class);
     private PendingKind pendingKind;
     private long revision;
+    private String loadedSource;
 
-    static PurifierConfig load(Context context, ModuleLog log) {
-        return new PurifierConfig(context.getFilesDir(), CacheAtomicWriter.RENAME_REPLACE, log);
+    static PurifierConfig load(Context context, ConfigStore store, ModuleLog log) {
+        File legacyFile = new File(context.getFilesDir(), FILE_NAME);
+        return new PurifierConfig(store, new LegacyFileSource(legacyFile), log);
     }
 
-    PurifierConfig(File filesDir, CacheAtomicWriter.ReplaceOperation replaceOperation,
-                   ModuleLog log) {
-        this.file = new File(filesDir, FILE_NAME);
-        this.replaceOperation = replaceOperation;
+    PurifierConfig(ConfigStore store, LegacySource legacySource, ModuleLog log) {
+        this.store = store;
+        this.legacySource = legacySource;
         this.log = log;
-        for (Feature feature : Feature.values()) {
-            enabled.put(feature, feature.defaultEnabled);
-        }
-        if (!read()) {
-            pendingKind = PendingKind.DEFAULT;
-            revision = 1L;
-            persist();
-        }
+        resetDefaults();
+        loadInitial();
     }
 
     synchronized boolean isEnabled(Feature feature) {
@@ -112,6 +106,15 @@ final class PurifierConfig {
         return revision;
     }
 
+    synchronized String loadedSource() {
+        return loadedSource;
+    }
+
+    /** Validated snapshot handed to the visible module UI for one-time import. */
+    synchronized byte[] serializedSnapshot() {
+        return encode();
+    }
+
     synchronized boolean hasNonDefaultSelections() {
         for (Feature feature : Feature.values()) {
             if (isEnabled(feature) != feature.defaultEnabled) {
@@ -121,7 +124,7 @@ final class PurifierConfig {
         return false;
     }
 
-    /** Returns true only after the new value was durably written. */
+    /** Returns true only after the complete new snapshot was atomically accepted. */
     synchronized boolean setEnabled(Feature feature, boolean value) {
         boolean previous = isEnabled(feature);
         if (previous == value) {
@@ -132,7 +135,7 @@ final class PurifierConfig {
         enabled.put(feature, value);
         revision++;
         pendingKind = PendingKind.SELECTION;
-        if (persist()) {
+        if (persist("configToggle:" + feature.key)) {
             return true;
         }
         enabled.put(feature, previous);
@@ -147,29 +150,61 @@ final class PurifierConfig {
         }
         PendingKind previous = pendingKind;
         pendingKind = PendingKind.NONE;
-        if (persist()) {
+        if (persist("configMarkAdapted")) {
             return true;
         }
         pendingKind = previous;
         return false;
     }
 
-    private boolean read() {
-        if (!file.isFile() || file.length() <= 0 || file.length() > MAX_BYTES) {
+    private void loadInitial() {
+        byte[] remoteRaw = store.read();
+        boolean remoteWasPresent = remoteRaw != null;
+        byte[] remote = bounded(remoteRaw);
+        if (decode(remote)) {
+            loadedSource = "remoteAuthoritative";
+            info("config loaded source=" + loadedSource + " backend=" + store.backendName()
+                    + " revision=" + revision + " pending=" + pendingKind.value);
+            return;
+        }
+
+        if (!remoteWasPresent && legacySource != null) {
+            byte[] legacy = bounded(legacySource.read());
+            if (decode(legacy)) {
+                loadedSource = "legacyReadOnly";
+                boolean migrated = persist("legacyConfigImport");
+                if (migrated) {
+                    loadedSource = "legacyImportedToRemote";
+                }
+                info("config legacy import source=" + legacySource.description()
+                        + " migrated=" + migrated + " authoritative=" + loadedSource);
+                return;
+            }
+        }
+
+        resetDefaults();
+        loadedSource = remoteWasPresent ? "remoteInvalidDefaults" : "defaults";
+        boolean persisted = persist(remoteWasPresent
+                ? "configRepairDefaults" : "configCreateDefaults");
+        info("config initialized source=" + loadedSource + " persisted=" + persisted
+                + " backend=" + store.backendName());
+    }
+
+    private void resetDefaults() {
+        enabled.clear();
+        for (Feature feature : Feature.values()) {
+            enabled.put(feature, feature.defaultEnabled);
+        }
+        pendingKind = PendingKind.DEFAULT;
+        revision = 1L;
+    }
+
+    private boolean decode(byte[] bytes) {
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) {
             return false;
         }
-        try (FileInputStream in = new FileInputStream(file)) {
-            byte[] bytes = new byte[(int) file.length()];
-            int offset = 0;
-            while (offset < bytes.length) {
-                int count = in.read(bytes, offset, bytes.length - offset);
-                if (count < 0) {
-                    break;
-                }
-                offset += count;
-            }
-            JSONObject root = new JSONObject(
-                    new String(bytes, 0, offset, StandardCharsets.UTF_8));
+        try {
+            JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
             if (root.optInt("schema", 0) != SCHEMA) {
                 return false;
             }
@@ -177,19 +212,41 @@ final class PurifierConfig {
             if (options == null) {
                 return false;
             }
+            EnumMap<Feature, Boolean> decoded = new EnumMap<>(Feature.class);
             for (Feature feature : Feature.values()) {
-                enabled.put(feature, options.optBoolean(feature.key, feature.defaultEnabled));
+                Object raw = options.opt(feature.key);
+                if (raw != null && raw != JSONObject.NULL && !(raw instanceof Boolean)) {
+                    return false;
+                }
+                decoded.put(feature, raw instanceof Boolean
+                        ? (Boolean) raw : feature.defaultEnabled);
             }
+            enabled.clear();
+            enabled.putAll(decoded);
             pendingKind = PendingKind.from(root.optString("pendingAdaptation", "none"));
             revision = Math.max(1L, root.optLong("revision", 1L));
             return true;
-        } catch (Throwable throwable) {
-            info("config read failed; recreating defaults error=" + throwable);
+        } catch (Throwable failure) {
+            info("config decode failed error=" + failure);
             return false;
         }
     }
 
-    private boolean persist() {
+    private boolean persist(String reason) {
+        try {
+            byte[] bytes = encode();
+            boolean written = bytes != null && store.write(bytes, reason);
+            info("config persisted=" + written + " reason=" + reason
+                    + " revision=" + revision + " pending=" + pendingKind.value
+                    + " backend=" + store.backendName());
+            return written;
+        } catch (Throwable failure) {
+            info("config persist failed reason=" + reason + " error=" + failure);
+            return false;
+        }
+    }
+
+    private byte[] encode() {
         try {
             JSONObject root = new JSONObject();
             root.put("schema", SCHEMA);
@@ -200,20 +257,60 @@ final class PurifierConfig {
                 options.put(feature.key, isEnabled(feature));
             }
             root.put("options", options);
-            boolean written = CacheAtomicWriter.write(file,
-                    root.toString().getBytes(StandardCharsets.UTF_8), replaceOperation);
-            info("config persisted=" + written + " revision=" + revision
-                    + " pending=" + pendingKind.value);
-            return written;
-        } catch (Throwable throwable) {
-            info("config persist failed error=" + throwable);
-            return false;
+            byte[] bytes = root.toString().getBytes(StandardCharsets.UTF_8);
+            return bytes.length <= MAX_BYTES ? bytes : null;
+        } catch (Throwable failure) {
+            info("config encode failed error=" + failure);
+            return null;
         }
+    }
+
+    private static byte[] bounded(byte[] bytes) {
+        return bytes != null && bytes.length <= MAX_BYTES ? bytes : null;
     }
 
     private void info(String message) {
         if (log != null) {
             log.info(message);
+        }
+    }
+
+    static final class LegacyFileSource implements LegacySource {
+        private final File file;
+
+        LegacyFileSource(File file) {
+            this.file = file;
+        }
+
+        @Override
+        public byte[] read() {
+            if (!file.isFile() || file.length() <= 0 || file.length() > MAX_BYTES) {
+                return null;
+            }
+            try (FileInputStream input = new FileInputStream(file)) {
+                byte[] bytes = new byte[(int) file.length()];
+                int offset = 0;
+                while (offset < bytes.length) {
+                    int count = input.read(bytes, offset, bytes.length - offset);
+                    if (count < 0) {
+                        break;
+                    }
+                    offset += count;
+                }
+                if (offset == bytes.length) {
+                    return bytes;
+                }
+                byte[] exact = new byte[offset];
+                System.arraycopy(bytes, 0, exact, 0, offset);
+                return exact;
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+
+        @Override
+        public String description() {
+            return "coolapkFilesDirReadOnly/" + FILE_NAME;
         }
     }
 }

@@ -1,10 +1,7 @@
 package io.github.yylsping.coolapkpurifier;
 
 import android.app.Application;
-import android.os.Build;
 
-import java.io.FileInputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.libxposed.api.XposedModule;
@@ -31,7 +28,13 @@ public final class CoolapkModule extends XposedModule {
 
         ModuleLog log = new ModuleLog(this);
         try {
-            HookCoordinator created = new HookCoordinator(this, log, param.getClassLoader());
+            // BUG-A: the DexKit native library is located through the
+            // framework-owned module info, never by asking the host
+            // PackageManager for the module package.
+            DexKitNativeLoader.configure(() -> DexKitNativeLoader.Location.fromFramework(
+                    getModuleApplicationInfo(), BuildConfig.VERSION_CODE));
+            HookCoordinator created = new HookCoordinator(this, log, param.getClassLoader(),
+                    getModuleApplicationInfo());
             created.install();
             coordinator = created;
             log.info("initialized API 102 hooks in " + processName);
@@ -42,22 +45,7 @@ public final class CoolapkModule extends XposedModule {
     }
 
     private static String currentProcessName() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            return Application.getProcessName();
-        }
-        try (FileInputStream stream = new FileInputStream("/proc/self/cmdline")) {
-            byte[] bytes = new byte[256];
-            int length = stream.read(bytes);
-            if (length <= 0) {
-                return "";
-            }
-            int end = 0;
-            while (end < length && bytes[end] != 0) {
-                end++;
-            }
-            return new String(bytes, 0, end, StandardCharsets.UTF_8);
-        } catch (Throwable ignored) {
-            return "";
-        }
+        // Application.getProcessName() exists since API 28, the module minSdk.
+        return Application.getProcessName();
     }
 }
