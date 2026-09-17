@@ -106,6 +106,25 @@ public final class SplashUiLedgerTest {
     }
 
     @Test
+    public void observationFailureIsDistinctFromRemovalAndDispatchFailure() {
+        FakeClock clock = new FakeClock(0L);
+        List<String> emitted = new ArrayList<>();
+        SplashUiLedger ledger = new SplashUiLedger(clock, emitted::add);
+
+        ledger.recordEmbeddedRemovalObservationFailed();
+
+        assertEquals(1, ledger.embeddedRemovalObservationFailedCount());
+        assertEquals("observation failure must not imply removal",
+                0, ledger.embeddedRemovalObservedCount());
+        assertEquals("observation failure must not reclassify the dispatch",
+                0, ledger.embeddedFinishDispatchFailedCount());
+        assertTrue(emitted.get(0).contains("event=FIRST_EMBEDDED_REMOVAL_OBSERVATION_FAILED"));
+        String summary = ledger.summaryLine("explicit");
+        assertTrue(summary.contains("embeddedRemovalObservationFailed=1"));
+        assertTrue(summary.contains("embeddedRemovalObserved=0"));
+    }
+
+    @Test
     public void firstEventsEmitOnceWithRelativeElapsed() {
         FakeClock clock = new FakeClock(100L);
         List<String> emitted = new ArrayList<>();

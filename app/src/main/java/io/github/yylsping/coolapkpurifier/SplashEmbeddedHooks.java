@@ -48,13 +48,31 @@ final class SplashEmbeddedHooks {
      * SDK close button uses {@code ad_close}). Decompilation shows both
      * consumers (MainActivity/SplashAdActivity listeners) only log the
      * reason locally — no branching, no reporting — so reusing the normal
-     * exit reason keeps the module indistinguishable from a host-initiated
-     * dismissal and carries no module-specific marker.
+     * exit reason reuses the host-native dismissal payload and introduces
+     * no module-specific reason marker.
      */
     private static final String DISMISS_REASON = "sdk_should_go_main";
     private static final String ANDROIDX_FRAGMENT = "androidx.fragment.app.Fragment";
     /** One-shot removal-observation delay; no periodic polling is involved. */
     private static final long OBSERVE_DELAY_MS = 1500L;
+
+    /** Tri-state result of the reflective {@code Fragment.isAdded} probe. */
+    enum AddedState {
+        ADDED,
+        NOT_ADDED,
+        /** Reflection failed; the true state is unknown, never assumed. */
+        UNKNOWN
+    }
+
+    /** Outcome of the delayed local removal observation. */
+    enum RemovalOutcome {
+        /** Weak ref cleared or fragment provably not added anymore. */
+        REMOVAL_OBSERVED,
+        /** Still added after the window; signal stays accepted, no retry. */
+        UNCONFIRMED,
+        /** Probe unreadable; says nothing about the actual UI state. */
+        OBSERVATION_UNKNOWN
+    }
 
     private final XposedModule module;
     private final ModuleLog log;
@@ -158,12 +176,39 @@ final class SplashEmbeddedHooks {
 
     /**
      * Latest dispatch transition snapshot for diagnostics:
-     * NOT_SEEN / SENT / REMOVAL_OBSERVED / UNCONFIRMED / DISPATCH_FAILED.
-     * Point-in-time only; later transitions are reported through
-     * {@code embeddedDispatchTransition} log lines.
+     * NOT_SEEN / SENT / REMOVAL_OBSERVED / UNCONFIRMED / OBSERVATION_UNKNOWN
+     * / DISPATCH_FAILED. Point-in-time only; later transitions are reported
+     * through {@code embeddedDispatchTransition} log lines.
      */
     String dispatchState() {
         return dispatchState;
+    }
+
+    /**
+     * Maps the delayed observation inputs to an outcome. UNKNOWN probe
+     * results never map to REMOVAL_OBSERVED.
+     */
+    static RemovalOutcome removalOutcome(boolean referenceCleared, AddedState added) {
+        if (referenceCleared || added == AddedState.NOT_ADDED) {
+            return RemovalOutcome.REMOVAL_OBSERVED;
+        }
+        if (added == AddedState.ADDED) {
+            return RemovalOutcome.UNCONFIRMED;
+        }
+        return RemovalOutcome.OBSERVATION_UNKNOWN;
+    }
+
+    /**
+     * Tri-state reflective {@code isAdded} probe. Any reflection failure is
+     * UNKNOWN — callers must fail closed, never assume removal.
+     */
+    static AddedState probeAdded(Object fragment) {
+        try {
+            Object added = fragment.getClass().getMethod("isAdded").invoke(fragment);
+            return Boolean.TRUE.equals(added) ? AddedState.ADDED : AddedState.NOT_ADDED;
+        } catch (Throwable unknown) {
+            return AddedState.UNKNOWN;
+        }
     }
 
     private void onExactFragmentUiEntered(Object fragment, BooleanSupplier enabled) {
@@ -180,7 +225,9 @@ final class SplashEmbeddedHooks {
         } catch (Throwable unavailable) {
             enabledNow = false;
         }
-        if (!SplashEmbeddedPolicy.shouldSuppress(enabledNow, isAdded(fragment))) {
+        // UNKNOWN fails closed: only a provably added fragment is suppressed.
+        if (!SplashEmbeddedPolicy.shouldSuppress(enabledNow,
+                probeAdded(fragment) == AddedState.ADDED)) {
             return;
         }
         // Atomic per-instance claim: a lifecycle re-entry inside the pending
@@ -194,14 +241,16 @@ final class SplashEmbeddedHooks {
     }
 
     private void suppress(Object fragment) {
+        AddedState added = probeAdded(fragment);
+        if (added != AddedState.ADDED) {
+            // Host already removed the fragment on its own (or the state is
+            // unreadable); drop the claim without sending anything.
+            dispatch.clearPending(fragment);
+            log.info("embedded splash suppress skipped reason="
+                    + (added == AddedState.NOT_ADDED ? "noLongerAdded" : "addedStateUnknown"));
+            return;
+        }
         try {
-            if (!isAdded(fragment)) {
-                // Host already removed the fragment on its own; drop the
-                // claim without sending anything.
-                dispatch.clearPending(fragment);
-                log.info("embedded splash suppress skipped reason=noLongerAdded");
-                return;
-            }
             Object fragmentManager = fragment.getClass()
                     .getMethod("getParentFragmentManager").invoke(fragment);
             if (fragmentManager == null) {
@@ -214,7 +263,20 @@ final class SplashEmbeddedHooks {
             fragmentManager.getClass()
                     .getMethod("setFragmentResult", String.class, Bundle.class)
                     .invoke(fragmentManager, FRAGMENT_RESULT_KEY, result);
-            dispatch.markSent(fragment);
+        } catch (Throwable failure) {
+            // The finish signal itself could not be submitted.
+            dispatch.markDispatchFailed(fragment);
+            transitionTo("DISPATCH_FAILED");
+            if (splashUiLedger != null) {
+                splashUiLedger.recordEmbeddedFinishDispatchFailed();
+            }
+            log.error("embedded finish dispatch failed coverage=PARTIAL", failure);
+            return;
+        }
+        // The signal was accepted by the FragmentManager. Everything below is
+        // diagnostics only and must never reclassify this dispatch.
+        dispatch.markSent(fragment);
+        try {
             transitionTo("SENT");
             if (splashUiLedger != null) {
                 splashUiLedger.recordEmbeddedFinishSignalSent();
@@ -225,13 +287,9 @@ final class SplashEmbeddedHooks {
             log.info("embedded finish signal sent payloadSource=HOST_NATIVE"
                     + correlationSuffix());
             scheduleRemovalObservation(fragment);
-        } catch (Throwable failure) {
-            dispatch.markDispatchFailed(fragment);
-            transitionTo("DISPATCH_FAILED");
-            if (splashUiLedger != null) {
-                splashUiLedger.recordEmbeddedFinishDispatchFailed();
-            }
-            log.error("embedded finish dispatch failed coverage=PARTIAL", failure);
+        } catch (Throwable diagnosticsFailure) {
+            log.error("embedded post-dispatch diagnostics failed; dispatch unchanged",
+                    diagnosticsFailure);
         }
     }
 
@@ -242,13 +300,16 @@ final class SplashEmbeddedHooks {
      * already unreachable, which is only possible after removal, so it also
      * counts as observed removal. A still-added fragment becomes UNCONFIRMED
      * and is NOT retried: the accepted result may still be delivered later.
-     * Never reschedules itself.
+     * An unreadable probe is OBSERVATION_UNKNOWN and says nothing about the
+     * UI. Never reschedules itself.
      */
     private void scheduleRemovalObservation(Object fragment) {
         WeakReference<Object> fragmentRef = new WeakReference<>(fragment);
         handler().postDelayed(() -> {
             Object current = fragmentRef.get();
-            if (current == null || !isAdded(current)) {
+            RemovalOutcome outcome = removalOutcome(current == null,
+                    current == null ? AddedState.UNKNOWN : probeAdded(current));
+            if (outcome == RemovalOutcome.REMOVAL_OBSERVED) {
                 transitionTo("REMOVAL_OBSERVED");
                 if (splashUiLedger != null) {
                     splashUiLedger.recordEmbeddedRemovalObserved();
@@ -256,13 +317,22 @@ final class SplashEmbeddedHooks {
                 log.info("embedded removal observed after finish signal");
                 return;
             }
-            dispatch.markUnconfirmed(current);
-            transitionTo("UNCONFIRMED");
-            if (splashUiLedger != null) {
-                splashUiLedger.recordEmbeddedFinishUnconfirmed();
+            if (outcome == RemovalOutcome.UNCONFIRMED) {
+                dispatch.markUnconfirmed(current);
+                transitionTo("UNCONFIRMED");
+                if (splashUiLedger != null) {
+                    splashUiLedger.recordEmbeddedFinishUnconfirmed();
+                }
+                log.info("embedded finish unconfirmed after " + OBSERVE_DELAY_MS
+                        + "ms; signal already sent, no automatic retry");
+                return;
             }
-            log.info("embedded finish unconfirmed after " + OBSERVE_DELAY_MS
-                    + "ms; signal already sent, no automatic retry");
+            transitionTo("OBSERVATION_UNKNOWN");
+            if (splashUiLedger != null) {
+                splashUiLedger.recordEmbeddedRemovalObservationFailed();
+            }
+            log.info("embedded removal observation failed; isAdded probe unreadable,"
+                    + " dispatch unchanged, no automatic retry");
         }, OBSERVE_DELAY_MS);
     }
 
@@ -293,15 +363,6 @@ final class SplashEmbeddedHooks {
             return type.getDeclaredMethod(name, params);
         } catch (Throwable absent) {
             return null;
-        }
-    }
-
-    private static boolean isAdded(Object fragment) {
-        try {
-            Object added = fragment.getClass().getMethod("isAdded").invoke(fragment);
-            return Boolean.TRUE.equals(added);
-        } catch (Throwable unknown) {
-            return false;
         }
     }
 

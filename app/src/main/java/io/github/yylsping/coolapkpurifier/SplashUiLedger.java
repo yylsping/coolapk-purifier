@@ -14,8 +14,9 @@ import android.os.SystemClock;
  * that the fragment is gone (REMOVAL_OBSERVED); a bare signal is never
  * reported as removal, and a local observation is never reported as a
  * host-side acknowledgement. UNCONFIRMED (still added after the observation
- * window) is tracked separately from DISPATCH_FAILED (the signal itself
- * could not be submitted).
+ * window), OBSERVATION_FAILED (the isAdded probe itself was unreadable) and
+ * DISPATCH_FAILED (the signal could not be submitted) are tracked as three
+ * separate outcomes.
  *
  * <p>Emits one line per first occurrence; full snapshots are emitted by the
  * coordinator at terminal lifecycle points. Elapsed-realtime clock only; no
@@ -45,6 +46,7 @@ final class SplashUiLedger {
     private int embeddedFinishSignalSentCount;
     private int embeddedRemovalObservedCount;
     private int embeddedFinishUnconfirmedCount;
+    private int embeddedRemovalObservationFailedCount;
     private int embeddedFinishDispatchFailedCount;
     private long firstDecisionObservedAtElapsed = UNSET;
     private long firstActivityEnteredAtElapsed = UNSET;
@@ -53,6 +55,7 @@ final class SplashUiLedger {
     private long firstEmbeddedFinishSignalSentAtElapsed = UNSET;
     private long firstEmbeddedRemovalObservedAtElapsed = UNSET;
     private long firstEmbeddedFinishUnconfirmedAtElapsed = UNSET;
+    private long firstEmbeddedRemovalObservationFailedAtElapsed = UNSET;
     private long firstEmbeddedFinishDispatchFailedAtElapsed = UNSET;
 
     SplashUiLedger(Emitter emitter) {
@@ -147,7 +150,20 @@ final class SplashUiLedger {
         }
     }
 
-    /** Submitting the finish signal itself failed (exception/no manager). */
+    /**
+     * The delayed observation itself failed: the reflective isAdded probe
+     * was unreadable. Says nothing about the actual UI state and never
+     * reclassifies the dispatch.
+     */
+    synchronized void recordEmbeddedRemovalObservationFailed() {
+        embeddedRemovalObservationFailedCount++;
+        if (firstEmbeddedRemovalObservationFailedAtElapsed == UNSET) {
+            firstEmbeddedRemovalObservationFailedAtElapsed = nowRelative();
+            emitFirst("EMBEDDED_REMOVAL_OBSERVATION_FAILED", null);
+        }
+    }
+
+    /** Submitting the finish signal itself failed (exception). */
     synchronized void recordEmbeddedFinishDispatchFailed() {
         embeddedFinishDispatchFailedCount++;
         if (firstEmbeddedFinishDispatchFailedAtElapsed == UNSET) {
@@ -176,6 +192,10 @@ final class SplashUiLedger {
         return embeddedFinishUnconfirmedCount;
     }
 
+    synchronized int embeddedRemovalObservationFailedCount() {
+        return embeddedRemovalObservationFailedCount;
+    }
+
     synchronized int embeddedFinishDispatchFailedCount() {
         return embeddedFinishDispatchFailedCount;
     }
@@ -193,6 +213,7 @@ final class SplashUiLedger {
                 + " embeddedFinishSignalSent=" + embeddedFinishSignalSentCount
                 + " embeddedRemovalObserved=" + embeddedRemovalObservedCount
                 + " embeddedFinishUnconfirmed=" + embeddedFinishUnconfirmedCount
+                + " embeddedRemovalObservationFailed=" + embeddedRemovalObservationFailedCount
                 + " embeddedFinishDispatchFailed=" + embeddedFinishDispatchFailedCount
                 + " firstDecisionObservedAtElapsed=" + display(firstDecisionObservedAtElapsed)
                 + " firstActivityEnteredAtElapsed=" + display(firstActivityEnteredAtElapsed)
@@ -204,6 +225,8 @@ final class SplashUiLedger {
                 + display(firstEmbeddedRemovalObservedAtElapsed)
                 + " firstEmbeddedFinishUnconfirmedAtElapsed="
                 + display(firstEmbeddedFinishUnconfirmedAtElapsed)
+                + " firstEmbeddedRemovalObservationFailedAtElapsed="
+                + display(firstEmbeddedRemovalObservationFailedAtElapsed)
                 + " firstEmbeddedFinishDispatchFailedAtElapsed="
                 + display(firstEmbeddedFinishDispatchFailedAtElapsed);
     }
