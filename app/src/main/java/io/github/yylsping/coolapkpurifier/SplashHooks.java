@@ -35,6 +35,7 @@ final class SplashHooks {
     private final ActivityObserver observer;
     private final HookLedger ledger;
     private final FeatureExposureLedger exposureLedger;
+    private final SplashUiLedger splashUiLedger;
     private final List<HookHandle> bootstrapHandles = new ArrayList<>();
     private final List<String> bootstrapHookIds = new ArrayList<>();
     private final List<HookHandle> specificHandles = new ArrayList<>();
@@ -42,12 +43,14 @@ final class SplashHooks {
     private volatile boolean bootstrapCallbacksActive = true;
 
     SplashHooks(XposedModule module, ModuleLog log, ActivityObserver observer,
-                HookLedger ledger, FeatureExposureLedger exposureLedger) {
+                HookLedger ledger, FeatureExposureLedger exposureLedger,
+                SplashUiLedger splashUiLedger) {
         this.module = module;
         this.log = log;
         this.observer = observer;
         this.ledger = ledger;
         this.exposureLedger = exposureLedger;
+        this.splashUiLedger = splashUiLedger;
     }
 
     void installInstrumentationFallback() throws ReflectiveOperationException {
@@ -84,8 +87,10 @@ final class SplashHooks {
                         // be finished.
                         if (observer.shouldFinishSplash(activity)) {
                             recordSplashSample();
+                            recordActivityEntered();
                             if (finishSplash(activity, "instrumentation")) {
                                 recordSplashModified();
+                                recordActivityFinished();
                             }
                         }
                     }
@@ -185,8 +190,10 @@ final class SplashHooks {
                         if (thisObject instanceof Activity
                                 && observer.shouldFinishSplash((Activity) thisObject)) {
                             recordSplashSample();
+                            recordActivityEntered();
                             if (finishSplash((Activity) thisObject, "specific")) {
                                 recordSplashModified();
+                                recordActivityFinished();
                             }
                         }
                         return result;
@@ -242,6 +249,18 @@ final class SplashHooks {
     private void recordSplashModified() {
         if (exposureLedger != null) {
             exposureLedger.recordModified(PurifierConfig.Feature.SPLASH);
+        }
+    }
+
+    private void recordActivityEntered() {
+        if (splashUiLedger != null) {
+            splashUiLedger.recordActivityEntered();
+        }
+    }
+
+    private void recordActivityFinished() {
+        if (splashUiLedger != null) {
+            splashUiLedger.recordActivityFinished();
         }
     }
 }

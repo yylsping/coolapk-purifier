@@ -11,7 +11,8 @@ public final class DynamicTrustedStatusTest {
                 true, true, false, true, false, "terminalCleanup");
 
         assertTrue(status.contains("fallbackRequired=true"));
-        assertTrue(status.contains("specificHookInstalled=false"));
+        assertTrue(status.contains("activityHookInstalled=false"));
+        assertTrue(status.contains("coverage=NONE"));
         assertTrue(status.contains("instrumentationHookPresent=true"));
         assertTrue(status.contains("frameworkRetirePending=false"));
         assertTrue(status.contains("availability=UNAVAILABLE"));
@@ -27,12 +28,13 @@ public final class DynamicTrustedStatusTest {
     }
 
     @Test
-    public void readySpecificHookAfterSuccessfulRetirementReportsAbsentFrameworkHook() {
+    public void readyActivityCleanerAfterSuccessfulRetirementReportsAbsentFrameworkHook() {
         String status = status(BootstrapState.READY,
                 true, true, true, false, false, "postRetirement");
 
         assertTrue(status.contains("phase=postRetirement terminalState=READY"));
-        assertTrue(status.contains("specificHookInstalled=true"));
+        assertTrue(status.contains("activityHookInstalled=true"));
+        assertTrue(status.contains("coverage=FULL"));
         assertTrue(status.contains("instrumentationHookPresent=false"));
         assertTrue(status.contains("frameworkRetirePending=false"));
         assertTrue(status.contains("availability=READY"));
@@ -63,30 +65,44 @@ public final class DynamicTrustedStatusTest {
     }
 
     @Test
-    public void embeddedSplashRequiresBothActivityAndDecisionHooks() {
-        String incomplete = DynamicTrustedStatus.summaryLine(
+    public void decisionObserverIsDiagnosticsAndNeverGatesAvailability() {
+        // Embedded host, embedded UI cleaner live, observer missing: READY.
+        String observerMissing = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, true, true, false, true, false,
-                false, 0, false, true, "decisionMissing", "terminalCleanup");
-        assertTrue(incomplete.contains("specificHookInstalled=false"));
-        assertTrue(incomplete.contains("activityHookInstalled=true"));
-        assertTrue(incomplete.contains("decisionRequired=true"));
-        assertTrue(incomplete.contains("decisionHookInstalled=false"));
-        assertTrue(incomplete.contains("availability=UNAVAILABLE"));
+                true, true, false, true, true, false, false, false,
+                false, 0, false, true, "observerMissing", "terminalCleanup");
+        assertTrue(observerMissing.contains("embeddedHost=true"));
+        assertTrue(observerMissing.contains("embeddedUiHookInstalled=true"));
+        assertTrue(observerMissing.contains("decisionObserverInstalled=false"));
+        assertTrue(observerMissing.contains("coverage=FULL"));
+        assertTrue(observerMissing.contains("availability=READY"));
 
-        String complete = DynamicTrustedStatus.summaryLine(
+        // Non-embedded host, activity cleaner live, observer missing: READY.
+        String activityOnly = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, true, true, true, false, false,
+                true, true, true, false, false, false, false, false,
                 false, 0, false, true, null, "postRetirement");
-        assertTrue(complete.contains("specificHookInstalled=true"));
-        assertTrue(complete.contains("decisionHookInstalled=true"));
-        assertTrue(complete.contains("availability=READY"));
+        assertTrue(activityOnly.contains("coverage=FULL"));
+        assertTrue(activityOnly.contains("availability=READY"));
+    }
+
+    @Test
+    public void embeddedHostWithoutEmbeddedCleanerReportsPartialCoverage() {
+        String partial = DynamicTrustedStatus.summaryLine(
+                BootstrapState.READY,
+                true, true, true, true, false, true, false, false,
+                false, 0, false, true, "embeddedUiMissing", "terminalCleanup");
+        assertTrue(partial.contains("embeddedHost=true"));
+        assertTrue(partial.contains("embeddedUiHookInstalled=false"));
+        assertTrue(partial.contains("decisionObserverInstalled=true"));
+        assertTrue(partial.contains("coverage=PARTIAL"));
+        assertTrue(partial.contains("availability=READY"));
     }
 
     private static String status(BootstrapState state,
                                  boolean splashEnabled,
                                  boolean fallbackRequired,
-                                 boolean specific,
+                                 boolean activityInstalled,
                                  boolean instrumentationPresent,
                                  boolean retirePending,
                                  String phase) {
@@ -94,7 +110,8 @@ public final class DynamicTrustedStatusTest {
                 state,
                 splashEnabled,
                 fallbackRequired,
-                specific,
+                activityInstalled,
+                false,
                 false,
                 false,
                 instrumentationPresent,

@@ -71,8 +71,11 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final FeatureGate featureGate = new FeatureGate();
     private final HookLedger hookLedger = new HookLedger();
     private final FeatureExposureLedger exposureLedger;
+    private final SplashUiLedger splashUiLedger;
+    private final SplashDecisionState splashDecisionState;
     private final SplashHooks splashHooks;
-    private final SplashDecisionHooks splashDecisionHooks;
+    private final SplashDecisionObserver splashDecisionObserver;
+    private final SplashEmbeddedHooks splashEmbeddedHooks;
     private final EntityListHooks entityListHooks;
     private final SplashGate splashGate = new SplashGate();
     private final RuntimeDexObserver runtimeDexObserver;
@@ -126,10 +129,16 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         this.primaryLoader = primaryLoader;
         this.moduleInfo = moduleInfo;
         this.exposureLedger = new FeatureExposureLedger(log::info);
+        this.splashUiLedger = new SplashUiLedger(log::info);
+        this.splashDecisionState = new SplashDecisionState();
         this.splashHooks = new SplashHooks(
-                module, log, this, hookLedger, exposureLedger);
-        this.splashDecisionHooks = new SplashDecisionHooks(
-                module, log, hookLedger, exposureLedger);
+                module, log, this, hookLedger, exposureLedger, splashUiLedger);
+        this.splashDecisionObserver = new SplashDecisionObserver(
+                module, log, hookLedger, exposureLedger,
+                splashUiLedger, splashDecisionState);
+        this.splashEmbeddedHooks = new SplashEmbeddedHooks(
+                module, log, hookLedger, exposureLedger,
+                splashUiLedger, splashDecisionState);
         this.entityListHooks = new EntityListHooks(
                 module, log, featureGate, hookLedger, exposureLedger);
         this.runtimeDexObserver = new RuntimeDexObserver(module, log, this, hookLedger);
@@ -326,6 +335,10 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
         installManifestFeatures(profile, context.getClassLoader());
 
+        // The embedded UI cleaner depends only on the exact fragment class,
+        // never on the resolver pipeline or the decision observer.
+        maybeInstallEmbeddedCleaner(context.getClassLoader(), "attach");
+
         if (topology.needsDynamicBootstrap()) {
             try {
                 if (topology.needsInstrumentationFallback()) {
@@ -356,6 +369,28 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         }
         markState(BootstrapState.WAIT_RUNTIME_DEX);
         ensureIdentityAsync();
+    }
+
+    /**
+     * Event-driven install of the embedded splash UI cleaner: attempted at
+     * attach and retried from activity-create events (never on a timer) until
+     * the exact fragment class is loadable. Independent of the resolver
+     * pipeline and of the decision observer.
+     */
+    private void maybeInstallEmbeddedCleaner(ClassLoader loader, String trigger) {
+        HookTopology current = topology;
+        if (current == null || !current.needsSplash() || !embeddedSplashHost
+                || splashEmbeddedHooks.isInstalled()) {
+            return;
+        }
+        if (loader == null) {
+            return;
+        }
+        boolean installed = splashEmbeddedHooks.install(loader,
+                () -> featureGate.isEffectiveEnabled(PurifierConfig.Feature.SPLASH));
+        if (installed) {
+            log.info("embedded splash UI cleaner installed trigger=" + trigger);
+        }
     }
 
     private Map<PurifierConfig.Feature, Boolean> effectiveSnapshot() {
@@ -446,6 +481,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             splashCandidateSeenBeforeReady = true;
         }
         ClassLoader activityLoader = activity.getClass().getClassLoader();
+        maybeInstallEmbeddedCleaner(activityLoader, "activityPre:" + name);
         if (activeRuntimeLoader != null && activityLoader != activeRuntimeLoader) {
             onRuntimeLoaderChanged(activityLoader, "activityLoaderChanged:" + name);
         }
@@ -953,8 +989,9 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         }
         if (outcome.splashDecisionInstalled) {
             traceAfterContext("splashDecisionHookInstalled",
-                    "installed=true source=" + source);
-            log.info("installed splash decision hook source=" + source);
+                    "installed=true source=" + source + " mode=" + SplashDecisionPolicy.MODE);
+            log.info("installed splash decision observer mode=" + SplashDecisionPolicy.MODE
+                    + " source=" + source);
         }
     }
 
@@ -981,8 +1018,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
         @Override
         public boolean installSplashDecision(Method method, ResolvedTarget target) {
-            return splashDecisionHooks.install(target, method.getDeclaringClass().getClassLoader(),
-                    () -> featureGate.isEffectiveEnabled(PurifierConfig.Feature.SPLASH));
+            return splashDecisionObserver.install(target,
+                    method.getDeclaringClass().getClassLoader());
         }
     };
 
@@ -993,10 +1030,12 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     }
 
     private boolean isSplashReady() {
-        return SplashDecisionPolicy.ready(
+        // UI-cleaner truth only; the decision observer is diagnostics and
+        // never gates readiness.
+        return SplashCoveragePolicy.ready(
                 !installedSplashClasses.isEmpty(),
                 embeddedSplashHost,
-                splashDecisionHooks.isInstalled());
+                splashEmbeddedHooks.isInstalled());
     }
 
     /**
@@ -1032,6 +1071,25 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 + entityListHooks.hookedMethodCount()
                 + " splashInstalled=" + installedSplashClasses
                 + " coverageSettledBy=" + coverageSource);
+    }
+
+    /**
+     * Terminal-point replay of the decision observation semantics. The live
+     * first-observation line can be lost to OEM log burst quotas (ColorOS
+     * LOG_FLOWCTRL), so the post-terminal summary re-states it from the
+     * process-local observation state.
+     */
+    private void logDecisionObservationSummary(String phase) {
+        Boolean original = splashDecisionState.lastDecisionOriginal();
+        if (original == null) {
+            log.info("splashDecision observationSummary phase=" + phase
+                    + " observed=false mode=" + SplashDecisionPolicy.MODE);
+            return;
+        }
+        log.info("splashDecision observationSummary phase=" + phase
+                + " original=" + original + " returned=" + original
+                + " overrideApplied=false mode=" + SplashDecisionPolicy.MODE
+                + " observedAtElapsed=" + splashDecisionState.lastDecisionObservedAtElapsed());
     }
 
     /**
@@ -1114,6 +1172,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             }
             log.info(dynamicTrustedSummaryLine("postRetirement"));
             log.info(exposureLedger.summaryLine("postRetirement:" + state));
+            log.info(splashUiLedger.summaryLine("postRetirement:" + state));
+            logDecisionObservationSummary("postRetirement:" + state);
             log.info(storage.auditLine());
             log.info("coordinator bootstrapRetireAttempted=true state=" + state
                     + " frameworkHooksRetired=" + !hookLedger.hasActiveFrameworkHooks()
@@ -1142,6 +1202,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         }
         log.info(dynamicTrustedSummaryLine("terminalCleanup"));
         log.info(exposureLedger.summaryLine("terminal:" + state));
+        log.info(splashUiLedger.summaryLine("terminal:" + state));
+        logDecisionObservationSummary("terminal:" + state);
         log.info(storage.auditLine());
         log.info("coordinator bootstrap lifecycle retired executorShutdown=true"
                 + " watcherUnhooked=true");
@@ -1170,7 +1232,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 fallbackRequired,
                 !installedSplashClasses.isEmpty(),
                 splashEnabled && embeddedSplashHost,
-                splashDecisionHooks.isInstalled(),
+                splashEmbeddedHooks.isInstalled(),
+                splashDecisionObserver.isInstalled(),
                 instrumentationHookPresent,
                 retirePending,
                 feedEnabled,

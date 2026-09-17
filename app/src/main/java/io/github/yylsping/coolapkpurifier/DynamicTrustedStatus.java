@@ -6,6 +6,10 @@ package io.github.yylsping.coolapkpurifier;
  * <p>Policy and physical state are deliberately separate: whether a fallback
  * is required cannot prove that an Instrumentation hook was installed, and a
  * completed retirement attempt cannot prove that an unhook succeeded.
+ *
+ * <p>Splash reports UI-layer truth only: the decision observer is a
+ * diagnostic capability and never feeds availability; coverage is the
+ * {@link SplashCoveragePolicy} verdict of the activity/embedded UI cleaners.
  */
 final class DynamicTrustedStatus {
     private DynamicTrustedStatus() {
@@ -15,8 +19,9 @@ final class DynamicTrustedStatus {
                               boolean splashEnabled,
                               boolean fallbackRequired,
                               boolean activitySplashHookInstalled,
-                              boolean splashDecisionRequired,
-                              boolean splashDecisionHookInstalled,
+                              boolean embeddedSplashHost,
+                              boolean embeddedUiHookInstalled,
+                              boolean decisionObserverInstalled,
                               boolean instrumentationHookPresent,
                               boolean frameworkRetirePending,
                               boolean feedEnabled,
@@ -27,8 +32,8 @@ final class DynamicTrustedStatus {
                               String phase) {
         String unavailableReason = failureReason == null
                 ? "resolutionIncomplete" : failureReason;
-        boolean specificSplashHookInstalled = activitySplashHookInstalled
-                && (!splashDecisionRequired || splashDecisionHookInstalled);
+        SplashCoveragePolicy.Coverage splashCoverage = SplashCoveragePolicy.coverage(
+                activitySplashHookInstalled, embeddedSplashHost, embeddedUiHookInstalled);
         StringBuilder sb = new StringBuilder("dynamicTrustedStatus phase=")
                 .append(phase == null ? "terminal" : phase)
                 .append(" terminalState=").append(state);
@@ -36,16 +41,18 @@ final class DynamicTrustedStatus {
         sb.append(' ').append(PurifierConfig.Feature.SPLASH.key)
                 .append("={enabledAtStart=").append(splashEnabled)
                 .append(" fallbackRequired=").append(fallbackRequired)
-                .append(" specificHookInstalled=").append(specificSplashHookInstalled)
                 .append(" activityHookInstalled=").append(activitySplashHookInstalled)
-                .append(" decisionRequired=").append(splashDecisionRequired)
-                .append(" decisionHookInstalled=").append(splashDecisionHookInstalled)
+                .append(" embeddedHost=").append(embeddedSplashHost)
+                .append(" embeddedUiHookInstalled=").append(embeddedUiHookInstalled)
+                .append(" decisionObserverInstalled=").append(decisionObserverInstalled)
                 .append(" instrumentationHookPresent=").append(instrumentationHookPresent)
-                .append(" frameworkRetirePending=").append(frameworkRetirePending);
+                .append(" frameworkRetirePending=").append(frameworkRetirePending)
+                .append(" coverage=").append(splashCoverage);
         if (!splashEnabled) {
             sb.append(" availability=NOT_REQUIRED failureReason=-");
         } else {
-            boolean ready = specificSplashHookInstalled && state == BootstrapState.READY;
+            boolean ready = state == BootstrapState.READY
+                    && splashCoverage != SplashCoveragePolicy.Coverage.NONE;
             sb.append(" availability=").append(ready ? "READY" : "UNAVAILABLE")
                     .append(" failureReason=").append(ready ? "-" : unavailableReason);
         }

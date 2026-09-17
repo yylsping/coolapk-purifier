@@ -28,7 +28,7 @@ final class DynamicTargetApplier {
         /** Installs the specific splash hook; true on success. */
         boolean installSplash(Class<?> type, ResolvedTarget target);
 
-        /** Installs the exact embedded-splash decision hook; true on success. */
+        /** Installs the exact embedded-splash decision observer; true on success. */
         boolean installSplashDecision(Method method, ResolvedTarget target);
     }
 
