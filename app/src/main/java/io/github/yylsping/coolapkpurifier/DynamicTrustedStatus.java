@@ -8,8 +8,10 @@ package io.github.yylsping.coolapkpurifier;
  * completed retirement attempt cannot prove that an unhook succeeded.
  *
  * <p>Splash reports UI-layer truth only: the decision observer is a
- * diagnostic capability and never feeds availability; coverage is the
- * {@link SplashCoveragePolicy} verdict of the activity/embedded UI cleaners.
+ * diagnostic capability and never feeds availability; staticCoverage is the
+ * {@link SplashCoveragePolicy} verdict of the activity/embedded UI cleaners,
+ * while embeddedDispatchState reports the runtime finish-dispatch outcome
+ * (NOT_SEEN/SENT/CONFIRMED/FAILED) as a separate signal.
  */
 final class DynamicTrustedStatus {
     private DynamicTrustedStatus() {
@@ -21,6 +23,7 @@ final class DynamicTrustedStatus {
                               boolean activitySplashHookInstalled,
                               boolean embeddedSplashHost,
                               boolean embeddedUiHookInstalled,
+                              String embeddedDispatchState,
                               boolean decisionObserverInstalled,
                               boolean instrumentationHookPresent,
                               boolean frameworkRetirePending,
@@ -47,7 +50,9 @@ final class DynamicTrustedStatus {
                 .append(" decisionObserverInstalled=").append(decisionObserverInstalled)
                 .append(" instrumentationHookPresent=").append(instrumentationHookPresent)
                 .append(" frameworkRetirePending=").append(frameworkRetirePending)
-                .append(" coverage=").append(splashCoverage);
+                .append(" staticCoverage=").append(splashCoverage)
+                .append(" embeddedDispatchState=")
+                .append(embeddedDispatchState == null ? "NOT_SEEN" : embeddedDispatchState);
         if (!splashEnabled) {
             sb.append(" availability=NOT_REQUIRED failureReason=-");
         } else {

@@ -9,8 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Decision observation, activity finish and embedded suppression are separate
- * event families: observations never increment the UI modification counters.
+ * Decision observation, activity finish and embedded finish dispatch are
+ * separate event families: observations never increment the UI modification
+ * counters, and a submitted finish signal is never reported as suppression —
+ * only a confirmed host removal counts as CONFIRMED.
  */
 public final class SplashUiLedgerTest {
     @Test
@@ -25,14 +27,17 @@ public final class SplashUiLedgerTest {
 
         assertEquals(3, ledger.decisionObservedCount());
         assertEquals(0, ledger.activityFinishedCount());
-        assertEquals(0, ledger.embeddedUiSuppressedCount());
+        assertEquals(0, ledger.embeddedFinishSignalSentCount());
+        assertEquals(0, ledger.embeddedFinishConfirmedCount());
 
         String summary = ledger.summaryLine("terminal:READY");
         assertTrue(summary.contains("decisionObserved=3"));
         assertTrue(summary.contains("decisionOriginalTrue=2"));
         assertTrue(summary.contains("decisionOriginalFalse=1"));
         assertTrue(summary.contains("activityFinished=0"));
-        assertTrue(summary.contains("embeddedUiSuppressed=0"));
+        assertTrue(summary.contains("embeddedFinishSignalSent=0"));
+        assertTrue(summary.contains("embeddedFinishConfirmed=0"));
+        assertTrue(summary.contains("embeddedFinishFailed=0"));
     }
 
     @Test
@@ -44,19 +49,42 @@ public final class SplashUiLedgerTest {
         ledger.recordActivityEntered();
         ledger.recordActivityFinished();
         ledger.recordEmbeddedUiEntered();
-        ledger.recordEmbeddedUiSuppressed();
+        ledger.recordEmbeddedFinishSignalSent();
+        ledger.recordEmbeddedFinishConfirmed();
         ledger.recordEmbeddedUiEntered();
-        ledger.recordEmbeddedUiSuppressed();
+        ledger.recordEmbeddedFinishSignalSent();
+        ledger.recordEmbeddedFinishFailed();
 
         assertEquals(0, ledger.decisionObservedCount());
         assertEquals(1, ledger.activityFinishedCount());
-        assertEquals(2, ledger.embeddedUiSuppressedCount());
+        assertEquals(2, ledger.embeddedFinishSignalSentCount());
+        assertEquals(1, ledger.embeddedFinishConfirmedCount());
+        assertEquals(1, ledger.embeddedFinishFailedCount());
 
         String summary = ledger.summaryLine("explicit");
         assertTrue(summary.contains("activityEntered=1"));
         assertTrue(summary.contains("activityFinished=1"));
         assertTrue(summary.contains("embeddedUiEntered=2"));
-        assertTrue(summary.contains("embeddedUiSuppressed=2"));
+        assertTrue(summary.contains("embeddedFinishSignalSent=2"));
+        assertTrue(summary.contains("embeddedFinishConfirmed=1"));
+        assertTrue(summary.contains("embeddedFinishFailed=1"));
+    }
+
+    @Test
+    public void signalSentIsNotSuppressionUntilConfirmed() {
+        FakeClock clock = new FakeClock(0L);
+        List<String> emitted = new ArrayList<>();
+        SplashUiLedger ledger = new SplashUiLedger(clock, emitted::add);
+
+        ledger.recordEmbeddedUiEntered();
+        ledger.recordEmbeddedFinishSignalSent();
+
+        assertEquals(1, ledger.embeddedFinishSignalSentCount());
+        assertEquals("bare signal must not imply removal",
+                0, ledger.embeddedFinishConfirmedCount());
+
+        ledger.recordEmbeddedFinishConfirmed();
+        assertEquals(1, ledger.embeddedFinishConfirmedCount());
     }
 
     @Test
@@ -73,20 +101,26 @@ public final class SplashUiLedgerTest {
         ledger.recordActivityEntered();
         ledger.recordActivityFinished();
         ledger.recordEmbeddedUiEntered();
-        ledger.recordEmbeddedUiSuppressed();
+        ledger.recordEmbeddedFinishSignalSent();
+        ledger.recordEmbeddedFinishSignalSent();
+        ledger.recordEmbeddedFinishConfirmed();
 
-        assertEquals(5, emitted.size());
+        assertEquals(6, emitted.size());
         assertTrue(emitted.get(0).contains("splashUi event=FIRST_DECISION_OBSERVED original=true"));
         assertTrue(emitted.get(1).contains("event=FIRST_ACTIVITY_ENTERED"));
         assertTrue(emitted.get(2).contains("event=FIRST_ACTIVITY_FINISHED"));
         assertTrue(emitted.get(3).contains("event=FIRST_EMBEDDED_UI_ENTERED"));
-        assertTrue(emitted.get(4).contains("event=FIRST_EMBEDDED_UI_SUPPRESSED"));
+        assertTrue(emitted.get(4).contains(
+                "event=FIRST_EMBEDDED_FINISH_SIGNAL_SENT payloadSource=HOST_NATIVE"));
+        assertTrue(emitted.get(5).contains("event=FIRST_EMBEDDED_FINISH_CONFIRMED"));
 
         String summary = ledger.summaryLine("terminal:READY");
         assertTrue(summary.contains("originElapsed=100"));
         assertTrue(summary.contains("firstDecisionObservedAtElapsed=10"));
         assertTrue(summary.contains("firstActivityEnteredAtElapsed=15"));
         assertTrue(summary.contains("firstActivityFinishedAtElapsed=15"));
+        assertTrue(summary.contains("firstEmbeddedFinishSignalSentAtElapsed=15"));
+        assertTrue(summary.contains("firstEmbeddedFinishConfirmedAtElapsed=15"));
     }
 
     private static final class FakeClock implements SplashUiLedger.Clock {

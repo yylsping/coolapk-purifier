@@ -12,7 +12,7 @@ public final class DynamicTrustedStatusTest {
 
         assertTrue(status.contains("fallbackRequired=true"));
         assertTrue(status.contains("activityHookInstalled=false"));
-        assertTrue(status.contains("coverage=NONE"));
+        assertTrue(status.contains("staticCoverage=NONE"));
         assertTrue(status.contains("instrumentationHookPresent=true"));
         assertTrue(status.contains("frameworkRetirePending=false"));
         assertTrue(status.contains("availability=UNAVAILABLE"));
@@ -34,7 +34,7 @@ public final class DynamicTrustedStatusTest {
 
         assertTrue(status.contains("phase=postRetirement terminalState=READY"));
         assertTrue(status.contains("activityHookInstalled=true"));
-        assertTrue(status.contains("coverage=FULL"));
+        assertTrue(status.contains("staticCoverage=FULL"));
         assertTrue(status.contains("instrumentationHookPresent=false"));
         assertTrue(status.contains("frameworkRetirePending=false"));
         assertTrue(status.contains("availability=READY"));
@@ -69,20 +69,22 @@ public final class DynamicTrustedStatusTest {
         // Embedded host, embedded UI cleaner live, observer missing: READY.
         String observerMissing = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, false, true, true, false, false, false,
+                true, true, false, true, true, "CONFIRMED", false, false, false,
                 false, 0, false, true, "observerMissing", "terminalCleanup");
         assertTrue(observerMissing.contains("embeddedHost=true"));
         assertTrue(observerMissing.contains("embeddedUiHookInstalled=true"));
+        assertTrue(observerMissing.contains("embeddedDispatchState=CONFIRMED"));
         assertTrue(observerMissing.contains("decisionObserverInstalled=false"));
-        assertTrue(observerMissing.contains("coverage=FULL"));
+        assertTrue(observerMissing.contains("staticCoverage=FULL"));
         assertTrue(observerMissing.contains("availability=READY"));
 
         // Non-embedded host, activity cleaner live, observer missing: READY.
         String activityOnly = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, true, false, false, false, false, false,
+                true, true, true, false, false, "NOT_SEEN", false, false, false,
                 false, 0, false, true, null, "postRetirement");
-        assertTrue(activityOnly.contains("coverage=FULL"));
+        assertTrue(activityOnly.contains("staticCoverage=FULL"));
+        assertTrue(activityOnly.contains("embeddedDispatchState=NOT_SEEN"));
         assertTrue(activityOnly.contains("availability=READY"));
     }
 
@@ -90,13 +92,23 @@ public final class DynamicTrustedStatusTest {
     public void embeddedHostWithoutEmbeddedCleanerReportsPartialCoverage() {
         String partial = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, true, true, false, true, false, false,
+                true, true, true, true, false, "FAILED", true, false, false,
                 false, 0, false, true, "embeddedUiMissing", "terminalCleanup");
         assertTrue(partial.contains("embeddedHost=true"));
         assertTrue(partial.contains("embeddedUiHookInstalled=false"));
+        assertTrue(partial.contains("embeddedDispatchState=FAILED"));
         assertTrue(partial.contains("decisionObserverInstalled=true"));
-        assertTrue(partial.contains("coverage=PARTIAL"));
+        assertTrue(partial.contains("staticCoverage=PARTIAL"));
         assertTrue(partial.contains("availability=READY"));
+    }
+
+    @Test
+    public void nullDispatchStateFallsBackToNotSeen() {
+        String status = DynamicTrustedStatus.summaryLine(
+                BootstrapState.READY,
+                true, true, true, false, false, null, false, false, false,
+                false, 0, false, true, null, "postRetirement");
+        assertTrue(status.contains("embeddedDispatchState=NOT_SEEN"));
     }
 
     private static String status(BootstrapState state,
@@ -113,6 +125,7 @@ public final class DynamicTrustedStatusTest {
                 activityInstalled,
                 false,
                 false,
+                "NOT_SEEN",
                 false,
                 instrumentationPresent,
                 retirePending,

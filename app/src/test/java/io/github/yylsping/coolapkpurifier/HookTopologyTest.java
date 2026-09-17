@@ -118,7 +118,7 @@ public final class HookTopologyTest {
 
         String status = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                false, false, false, false, false, false, false, false,
+                false, false, false, false, false, "NOT_SEEN", false, false, false,
                 false, 0, false, true, null, "postRetirement");
         assertTrue(status.contains("remove_splash_ads={enabledAtStart=false"));
         assertTrue(status.contains("instrumentationHookPresent=false"));

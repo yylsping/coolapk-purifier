@@ -13,14 +13,14 @@ final class SplashEmbeddedPolicy {
     }
 
     /**
-     * Suppression requires the feature switch on, the fragment actually added
-     * to its host and no earlier signal for the same instance. The decision
-     * observer is deliberately absent from the inputs: UI suppression never
-     * depends on observation state.
+     * Suppression requires the feature switch on and the fragment actually
+     * added to its host. Duplicate-signal prevention is owned by
+     * {@link SplashEmbeddedDispatch}, not by this gate. The decision observer
+     * is deliberately absent from the inputs: UI suppression never depends on
+     * observation state.
      */
-    static boolean shouldSuppress(boolean featureEnabled, boolean fragmentAdded,
-                                  boolean alreadySignalled) {
-        return featureEnabled && fragmentAdded && !alreadySignalled;
+    static boolean shouldSuppress(boolean featureEnabled, boolean fragmentAdded) {
+        return featureEnabled && fragmentAdded;
     }
 
     private SplashEmbeddedPolicy() {

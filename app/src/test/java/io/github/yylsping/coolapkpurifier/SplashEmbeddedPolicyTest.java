@@ -7,7 +7,8 @@ import org.junit.Test;
 
 /**
  * Embedded UI cleaner gating: exact fragment only, feature switch required,
- * one signal per instance, and no dependency on decision observation state.
+ * and no dependency on decision observation state. Per-instance duplicate
+ * prevention is covered by {@link SplashEmbeddedDispatchTest}.
  */
 public final class SplashEmbeddedPolicyTest {
     @Test
@@ -24,12 +25,10 @@ public final class SplashEmbeddedPolicyTest {
     }
 
     @Test
-    public void suppressionRequiresSwitchAddedInstanceAndNoPriorSignal() {
-        assertTrue(SplashEmbeddedPolicy.shouldSuppress(true, true, false));
-        assertFalse("feature off", SplashEmbeddedPolicy.shouldSuppress(false, true, false));
-        assertFalse("not added", SplashEmbeddedPolicy.shouldSuppress(true, false, false));
-        assertFalse("already signalled",
-                SplashEmbeddedPolicy.shouldSuppress(true, true, true));
+    public void suppressionRequiresSwitchAndAddedInstance() {
+        assertTrue(SplashEmbeddedPolicy.shouldSuppress(true, true));
+        assertFalse("feature off", SplashEmbeddedPolicy.shouldSuppress(false, true));
+        assertFalse("not added", SplashEmbeddedPolicy.shouldSuppress(true, false));
     }
 
     @Test
@@ -37,7 +36,7 @@ public final class SplashEmbeddedPolicyTest {
         // The UI cleaner must work with zero decision observations: the policy
         // signature has no observation input, so both switch states fully
         // decide the outcome on their own.
-        assertTrue(SplashEmbeddedPolicy.shouldSuppress(true, true, false));
-        assertFalse(SplashEmbeddedPolicy.shouldSuppress(false, true, false));
+        assertTrue(SplashEmbeddedPolicy.shouldSuppress(true, true));
+        assertFalse(SplashEmbeddedPolicy.shouldSuppress(false, true));
     }
 }

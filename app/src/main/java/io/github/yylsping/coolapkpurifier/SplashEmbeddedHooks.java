@@ -5,9 +5,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 
 import io.github.libxposed.api.XposedInterface.ExceptionMode;
@@ -21,11 +20,15 @@ import io.github.libxposed.api.XposedModule;
  * <p>The hook runs the fragment's original lifecycle method first. Only
  * after the exact splash UI has genuinely entered its lifecycle does the
  * cleaner emit the host's own fragment-result finish signal — the same
- * dismissal channel the in-app skip/countdown path uses — so MainActivity
- * (or SplashAdActivity) performs its regular cleanup, continuation and
- * fragment removal itself. No upstream business decision is touched; there
- * is no visual-only fallback that could strand the host on a hidden splash
- * frame.
+ * dismissal channel and payload the in-app countdown/skip path uses — so
+ * MainActivity (or SplashAdActivity) performs its regular cleanup,
+ * continuation and fragment removal itself. No upstream business decision
+ * is touched; there is no visual-only fallback that could strand the host
+ * on a hidden splash frame.
+ *
+ * <p>Per-instance dedup and outcome tracking live in
+ * {@link SplashEmbeddedDispatch}; "signal sent" and "host removal confirmed"
+ * are distinct ledger events and are never conflated.
  *
  * <p>androidx types are reached reflectively: the module carries no
  * androidx dependency and must stay agnostic to the host's bundled
@@ -35,8 +38,19 @@ final class SplashEmbeddedHooks {
     private static final String HOOK_ID = "coolapk-splash-embedded-ui";
     private static final String FRAGMENT_RESULT_KEY = "SplashAd";
     private static final String EXTRA_FINISH_REASON = "FINISH_REASON";
-    private static final String DISMISS_REASON = "purifier_ui_dismiss";
+    /**
+     * Host-native finish payload, byte-identical to what SplashAdFragment
+     * itself emits when its countdown ends ({@code sdk_should_go_main}; the
+     * SDK close button uses {@code ad_close}). Decompilation shows both
+     * consumers (MainActivity/SplashAdActivity listeners) only log the
+     * reason locally — no branching, no reporting — so reusing the normal
+     * exit reason keeps the module indistinguishable from a host-initiated
+     * dismissal and carries no module-specific marker.
+     */
+    private static final String DISMISS_REASON = "sdk_should_go_main";
     private static final String ANDROIDX_FRAGMENT = "androidx.fragment.app.Fragment";
+    /** One-shot confirmation delay; no periodic polling is involved. */
+    private static final long CONFIRM_DELAY_MS = 1500L;
 
     private final XposedModule module;
     private final ModuleLog log;
@@ -44,7 +58,8 @@ final class SplashEmbeddedHooks {
     private final FeatureExposureLedger exposureLedger;
     private final SplashUiLedger splashUiLedger;
     private final SplashDecisionState decisionState;
-    private final Set<Integer> signalled = ConcurrentHashMap.newKeySet();
+    private final SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
+    private volatile String dispatchState = "NOT_SEEN";
     private volatile Handler mainHandler;
     private Class<?> installedClass;
     @SuppressWarnings("unused")
@@ -136,6 +151,14 @@ final class SplashEmbeddedHooks {
         return installedClass != null;
     }
 
+    /**
+     * Aggregate dispatch outcome for diagnostics:
+     * NOT_SEEN / SENT / CONFIRMED / FAILED.
+     */
+    String dispatchState() {
+        return dispatchState;
+    }
+
     private void onExactFragmentUiEntered(Object fragment, BooleanSupplier enabled) {
         if (splashUiLedger != null) {
             splashUiLedger.recordEmbeddedUiEntered();
@@ -150,9 +173,12 @@ final class SplashEmbeddedHooks {
         } catch (Throwable unavailable) {
             enabledNow = false;
         }
-        boolean added = isAdded(fragment);
-        boolean alreadySignalled = signalled.contains(System.identityHashCode(fragment));
-        if (!SplashEmbeddedPolicy.shouldSuppress(enabledNow, added, alreadySignalled)) {
+        if (!SplashEmbeddedPolicy.shouldSuppress(enabledNow, isAdded(fragment))) {
+            return;
+        }
+        // Atomic per-instance claim: a lifecycle re-entry inside the pending
+        // window cannot enqueue a second finish for the same instance.
+        if (!dispatch.tryMarkPending(fragment)) {
             return;
         }
         // Let the original lifecycle unwind fully before dismissing, mirroring
@@ -163,12 +189,14 @@ final class SplashEmbeddedHooks {
     private void suppress(Object fragment) {
         try {
             if (!isAdded(fragment)) {
+                dispatch.markRetryable(fragment);
                 log.info("embedded splash suppress skipped reason=noLongerAdded");
                 return;
             }
             Object fragmentManager = fragment.getClass()
                     .getMethod("getParentFragmentManager").invoke(fragment);
             if (fragmentManager == null) {
+                dispatch.markRetryable(fragment);
                 log.info("embedded splash suppress skipped reason=noFragmentManager");
                 return;
             }
@@ -177,18 +205,52 @@ final class SplashEmbeddedHooks {
             fragmentManager.getClass()
                     .getMethod("setFragmentResult", String.class, Bundle.class)
                     .invoke(fragmentManager, FRAGMENT_RESULT_KEY, result);
-            signalled.add(System.identityHashCode(fragment));
+            dispatch.markSent(fragment);
+            dispatchState = "SENT";
             if (splashUiLedger != null) {
-                splashUiLedger.recordEmbeddedUiSuppressed();
+                splashUiLedger.recordEmbeddedFinishSignalSent();
             }
             if (exposureLedger != null) {
                 exposureLedger.recordModified(PurifierConfig.Feature.SPLASH);
             }
-            log.info("embedded splash UI suppressed via host finish signal"
+            log.info("embedded finish signal sent payloadSource=HOST_NATIVE"
                     + correlationSuffix());
+            scheduleConfirmation(fragment);
         } catch (Throwable failure) {
-            log.error("embedded splash suppress failed coverage=PARTIAL", failure);
+            dispatch.markRetryable(fragment);
+            dispatchState = "FAILED";
+            if (splashUiLedger != null) {
+                splashUiLedger.recordEmbeddedFinishFailed();
+            }
+            log.error("embedded finish signal failed coverage=PARTIAL", failure);
         }
+    }
+
+    /**
+     * One-shot delayed check that the host actually consumed the signal and
+     * removed the fragment. A cleared weak reference means the fragment is
+     * already unreachable, which is only possible after removal, so it also
+     * counts as confirmation. Never reschedules itself.
+     */
+    private void scheduleConfirmation(Object fragment) {
+        WeakReference<Object> fragmentRef = new WeakReference<>(fragment);
+        handler().postDelayed(() -> {
+            Object current = fragmentRef.get();
+            if (current == null || !isAdded(current)) {
+                dispatchState = "CONFIRMED";
+                if (splashUiLedger != null) {
+                    splashUiLedger.recordEmbeddedFinishConfirmed();
+                }
+                log.info("embedded finish confirmed");
+                return;
+            }
+            dispatch.markRetryable(current);
+            dispatchState = "FAILED";
+            if (splashUiLedger != null) {
+                splashUiLedger.recordEmbeddedFinishFailed();
+            }
+            log.info("embedded finish unconfirmed; instance eligible for retry");
+        }, CONFIRM_DELAY_MS);
     }
 
     /** Observation correlation is diagnostic only; never a suppress gate. */
