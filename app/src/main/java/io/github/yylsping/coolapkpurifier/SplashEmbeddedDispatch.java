@@ -13,6 +13,12 @@ import java.util.Map;
  * and dead instances are reclaimed instead of accumulating. The PENDING mark
  * is applied synchronously before the runnable is posted, so a lifecycle
  * re-entry inside the pending window cannot enqueue a second finish.
+ *
+ * <p>SENT is terminal: once {@code setFragmentResult} has been accepted by
+ * the FragmentManager the result may still be delivered later, so a delayed
+ * "still added" observation (UNCONFIRMED) is NOT proof the signal failed and
+ * never triggers an automatic re-send. Only a genuine dispatch exception
+ * (DISPATCH_FAILED) makes a later lifecycle re-entry eligible to try again.
  */
 final class SplashEmbeddedDispatch {
     enum State {
@@ -21,8 +27,10 @@ final class SplashEmbeddedDispatch {
         PENDING,
         /** Finish signal successfully submitted to the FragmentManager. */
         SENT,
-        /** Dispatch failed or unconfirmed; a later lifecycle enter may retry. */
-        RETRYABLE
+        /** setFragmentResult itself failed; a later lifecycle enter may retry. */
+        DISPATCH_FAILED,
+        /** Signal sent but removal not observed within the confirmation window. */
+        UNCONFIRMED
     }
 
     /** Weak key with reference-identity semantics (== on the referent). */
@@ -58,7 +66,8 @@ final class SplashEmbeddedDispatch {
 
     /**
      * Atomically marks the instance PENDING when a finish may be enqueued.
-     * Returns false when a dispatch is already pending or was sent.
+     * Returns false when a dispatch is pending, was sent, or was left
+     * unconfirmed; only NONE and DISPATCH_FAILED are eligible.
      */
     synchronized boolean tryMarkPending(Object instance) {
         if (instance == null) {
@@ -67,7 +76,8 @@ final class SplashEmbeddedDispatch {
         expunge();
         InstanceKey key = new InstanceKey(instance, queue);
         State current = states.get(key);
-        if (current == State.PENDING || current == State.SENT) {
+        if (current == State.PENDING || current == State.SENT
+                || current == State.UNCONFIRMED) {
             return false;
         }
         states.put(key, State.PENDING);
@@ -83,15 +93,46 @@ final class SplashEmbeddedDispatch {
         states.put(new InstanceKey(instance, queue), State.SENT);
     }
 
-    /** Dispatch failed or unconfirmed: back to RETRYABLE, never stays PENDING. */
-    synchronized void markRetryable(Object instance) {
+    /** setFragmentResult itself threw: PENDING → DISPATCH_FAILED, retryable. */
+    synchronized void markDispatchFailed(Object instance) {
         if (instance == null) {
             return;
         }
         expunge();
         InstanceKey key = new InstanceKey(instance, queue);
         if (states.get(key) != State.SENT) {
-            states.put(key, State.RETRYABLE);
+            states.put(key, State.DISPATCH_FAILED);
+        }
+    }
+
+    /**
+     * Confirmation window elapsed with the fragment still added: SENT →
+     * UNCONFIRMED. Terminal — the accepted result may still be delivered by
+     * the host, so no automatic retry is allowed.
+     */
+    synchronized void markUnconfirmed(Object instance) {
+        if (instance == null) {
+            return;
+        }
+        expunge();
+        InstanceKey key = new InstanceKey(instance, queue);
+        if (states.get(key) == State.SENT) {
+            states.put(key, State.UNCONFIRMED);
+        }
+    }
+
+    /**
+     * Drops a PENDING claim without sending (e.g. the host already removed
+     * the fragment on its own before the posted runnable ran).
+     */
+    synchronized void clearPending(Object instance) {
+        if (instance == null) {
+            return;
+        }
+        expunge();
+        InstanceKey key = new InstanceKey(instance, queue);
+        if (states.get(key) == State.PENDING) {
+            states.remove(key);
         }
     }
 

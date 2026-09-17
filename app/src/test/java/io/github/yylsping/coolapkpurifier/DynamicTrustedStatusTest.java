@@ -69,11 +69,11 @@ public final class DynamicTrustedStatusTest {
         // Embedded host, embedded UI cleaner live, observer missing: READY.
         String observerMissing = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, false, true, true, "CONFIRMED", false, false, false,
+                true, true, false, true, true, "REMOVAL_OBSERVED", false, false, false,
                 false, 0, false, true, "observerMissing", "terminalCleanup");
         assertTrue(observerMissing.contains("embeddedHost=true"));
         assertTrue(observerMissing.contains("embeddedUiHookInstalled=true"));
-        assertTrue(observerMissing.contains("embeddedDispatchState=CONFIRMED"));
+        assertTrue(observerMissing.contains("embeddedDispatchState=REMOVAL_OBSERVED"));
         assertTrue(observerMissing.contains("decisionObserverInstalled=false"));
         assertTrue(observerMissing.contains("staticCoverage=FULL"));
         assertTrue(observerMissing.contains("availability=READY"));
@@ -92,11 +92,11 @@ public final class DynamicTrustedStatusTest {
     public void embeddedHostWithoutEmbeddedCleanerReportsPartialCoverage() {
         String partial = DynamicTrustedStatus.summaryLine(
                 BootstrapState.READY,
-                true, true, true, true, false, "FAILED", true, false, false,
+                true, true, true, true, false, "UNCONFIRMED", true, false, false,
                 false, 0, false, true, "embeddedUiMissing", "terminalCleanup");
         assertTrue(partial.contains("embeddedHost=true"));
         assertTrue(partial.contains("embeddedUiHookInstalled=false"));
-        assertTrue(partial.contains("embeddedDispatchState=FAILED"));
+        assertTrue(partial.contains("embeddedDispatchState=UNCONFIRMED"));
         assertTrue(partial.contains("decisionObserverInstalled=true"));
         assertTrue(partial.contains("staticCoverage=PARTIAL"));
         assertTrue(partial.contains("availability=READY"));

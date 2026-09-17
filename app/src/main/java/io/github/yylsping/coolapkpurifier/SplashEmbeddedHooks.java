@@ -27,8 +27,12 @@ import io.github.libxposed.api.XposedModule;
  * on a hidden splash frame.
  *
  * <p>Per-instance dedup and outcome tracking live in
- * {@link SplashEmbeddedDispatch}; "signal sent" and "host removal confirmed"
- * are distinct ledger events and are never conflated.
+ * {@link SplashEmbeddedDispatch}; "signal sent" and "removal observed" are
+ * distinct ledger events and are never conflated. The delayed removal check
+ * is a local observation only — it is not a host acknowledgement, and a
+ * still-added fragment after the observation window (UNCONFIRMED) never
+ * triggers an automatic re-send, because an accepted fragment result may
+ * still be delivered by the host later.
  *
  * <p>androidx types are reached reflectively: the module carries no
  * androidx dependency and must stay agnostic to the host's bundled
@@ -49,8 +53,8 @@ final class SplashEmbeddedHooks {
      */
     private static final String DISMISS_REASON = "sdk_should_go_main";
     private static final String ANDROIDX_FRAGMENT = "androidx.fragment.app.Fragment";
-    /** One-shot confirmation delay; no periodic polling is involved. */
-    private static final long CONFIRM_DELAY_MS = 1500L;
+    /** One-shot removal-observation delay; no periodic polling is involved. */
+    private static final long OBSERVE_DELAY_MS = 1500L;
 
     private final XposedModule module;
     private final ModuleLog log;
@@ -59,6 +63,7 @@ final class SplashEmbeddedHooks {
     private final SplashUiLedger splashUiLedger;
     private final SplashDecisionState decisionState;
     private final SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
+    /** Snapshot of the latest dispatch transition; NOT a terminal guarantee. */
     private volatile String dispatchState = "NOT_SEEN";
     private volatile Handler mainHandler;
     private Class<?> installedClass;
@@ -152,8 +157,10 @@ final class SplashEmbeddedHooks {
     }
 
     /**
-     * Aggregate dispatch outcome for diagnostics:
-     * NOT_SEEN / SENT / CONFIRMED / FAILED.
+     * Latest dispatch transition snapshot for diagnostics:
+     * NOT_SEEN / SENT / REMOVAL_OBSERVED / UNCONFIRMED / DISPATCH_FAILED.
+     * Point-in-time only; later transitions are reported through
+     * {@code embeddedDispatchTransition} log lines.
      */
     String dispatchState() {
         return dispatchState;
@@ -189,14 +196,16 @@ final class SplashEmbeddedHooks {
     private void suppress(Object fragment) {
         try {
             if (!isAdded(fragment)) {
-                dispatch.markRetryable(fragment);
+                // Host already removed the fragment on its own; drop the
+                // claim without sending anything.
+                dispatch.clearPending(fragment);
                 log.info("embedded splash suppress skipped reason=noLongerAdded");
                 return;
             }
             Object fragmentManager = fragment.getClass()
                     .getMethod("getParentFragmentManager").invoke(fragment);
             if (fragmentManager == null) {
-                dispatch.markRetryable(fragment);
+                dispatch.clearPending(fragment);
                 log.info("embedded splash suppress skipped reason=noFragmentManager");
                 return;
             }
@@ -206,7 +215,7 @@ final class SplashEmbeddedHooks {
                     .getMethod("setFragmentResult", String.class, Bundle.class)
                     .invoke(fragmentManager, FRAGMENT_RESULT_KEY, result);
             dispatch.markSent(fragment);
-            dispatchState = "SENT";
+            transitionTo("SENT");
             if (splashUiLedger != null) {
                 splashUiLedger.recordEmbeddedFinishSignalSent();
             }
@@ -215,42 +224,52 @@ final class SplashEmbeddedHooks {
             }
             log.info("embedded finish signal sent payloadSource=HOST_NATIVE"
                     + correlationSuffix());
-            scheduleConfirmation(fragment);
+            scheduleRemovalObservation(fragment);
         } catch (Throwable failure) {
-            dispatch.markRetryable(fragment);
-            dispatchState = "FAILED";
+            dispatch.markDispatchFailed(fragment);
+            transitionTo("DISPATCH_FAILED");
             if (splashUiLedger != null) {
-                splashUiLedger.recordEmbeddedFinishFailed();
+                splashUiLedger.recordEmbeddedFinishDispatchFailed();
             }
-            log.error("embedded finish signal failed coverage=PARTIAL", failure);
+            log.error("embedded finish dispatch failed coverage=PARTIAL", failure);
         }
     }
 
     /**
-     * One-shot delayed check that the host actually consumed the signal and
-     * removed the fragment. A cleared weak reference means the fragment is
+     * One-shot delayed check whether the embedded splash fragment is gone.
+     * This is the module's own local observation, never a host-side
+     * acknowledgement. A cleared weak reference means the fragment is
      * already unreachable, which is only possible after removal, so it also
-     * counts as confirmation. Never reschedules itself.
+     * counts as observed removal. A still-added fragment becomes UNCONFIRMED
+     * and is NOT retried: the accepted result may still be delivered later.
+     * Never reschedules itself.
      */
-    private void scheduleConfirmation(Object fragment) {
+    private void scheduleRemovalObservation(Object fragment) {
         WeakReference<Object> fragmentRef = new WeakReference<>(fragment);
         handler().postDelayed(() -> {
             Object current = fragmentRef.get();
             if (current == null || !isAdded(current)) {
-                dispatchState = "CONFIRMED";
+                transitionTo("REMOVAL_OBSERVED");
                 if (splashUiLedger != null) {
-                    splashUiLedger.recordEmbeddedFinishConfirmed();
+                    splashUiLedger.recordEmbeddedRemovalObserved();
                 }
-                log.info("embedded finish confirmed");
+                log.info("embedded removal observed after finish signal");
                 return;
             }
-            dispatch.markRetryable(current);
-            dispatchState = "FAILED";
+            dispatch.markUnconfirmed(current);
+            transitionTo("UNCONFIRMED");
             if (splashUiLedger != null) {
-                splashUiLedger.recordEmbeddedFinishFailed();
+                splashUiLedger.recordEmbeddedFinishUnconfirmed();
             }
-            log.info("embedded finish unconfirmed; instance eligible for retry");
-        }, CONFIRM_DELAY_MS);
+            log.info("embedded finish unconfirmed after " + OBSERVE_DELAY_MS
+                    + "ms; signal already sent, no automatic retry");
+        }, OBSERVE_DELAY_MS);
+    }
+
+    private void transitionTo(String next) {
+        String from = dispatchState;
+        dispatchState = next;
+        log.info("embeddedDispatchTransition from=" + from + " to=" + next);
     }
 
     /** Observation correlation is diagnostic only; never a suppress gate. */

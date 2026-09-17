@@ -8,8 +8,8 @@ import org.junit.Test;
 
 /**
  * Per-instance dispatch dedup: reference identity (never hash aliasing),
- * PENDING claimed atomically before posting, SENT is terminal, RETRYABLE
- * allows exactly one later retry.
+ * PENDING claimed atomically before posting, SENT is terminal, UNCONFIRMED
+ * never auto-retries, only DISPATCH_FAILED is eligible again.
  */
 public final class SplashEmbeddedDispatchTest {
     @Test
@@ -33,22 +33,63 @@ public final class SplashEmbeddedDispatchTest {
         dispatch.markSent(fragment);
         assertEquals(SplashEmbeddedDispatch.State.SENT, dispatch.stateOf(fragment));
         assertFalse(dispatch.tryMarkPending(fragment));
-        dispatch.markRetryable(fragment);
-        assertEquals("SENT must survive a late retryable mark",
+        dispatch.markDispatchFailed(fragment);
+        assertEquals("SENT must survive a late dispatch-failed mark",
                 SplashEmbeddedDispatch.State.SENT, dispatch.stateOf(fragment));
     }
 
     @Test
-    public void failedDispatchBecomesRetryableExactlyOnce() {
+    public void dispatchFailureIsRetryableExactlyOncePerReentry() {
         SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
         Object fragment = new Object();
 
         assertTrue(dispatch.tryMarkPending(fragment));
-        dispatch.markRetryable(fragment);
-        assertEquals(SplashEmbeddedDispatch.State.RETRYABLE, dispatch.stateOf(fragment));
-        assertTrue("RETRYABLE instance may be claimed again",
+        dispatch.markDispatchFailed(fragment);
+        assertEquals(SplashEmbeddedDispatch.State.DISPATCH_FAILED,
+                dispatch.stateOf(fragment));
+        assertTrue("DISPATCH_FAILED instance may be claimed again",
                 dispatch.tryMarkPending(fragment));
         assertEquals(SplashEmbeddedDispatch.State.PENDING, dispatch.stateOf(fragment));
+    }
+
+    @Test
+    public void unconfirmedIsTerminalAndNeverAutoRetried() {
+        SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
+        Object fragment = new Object();
+
+        assertTrue(dispatch.tryMarkPending(fragment));
+        dispatch.markSent(fragment);
+        dispatch.markUnconfirmed(fragment);
+        assertEquals(SplashEmbeddedDispatch.State.UNCONFIRMED, dispatch.stateOf(fragment));
+        assertFalse("UNCONFIRMED must not auto-retry; the accepted result may "
+                        + "still be delivered by the host",
+                dispatch.tryMarkPending(fragment));
+    }
+
+    @Test
+    public void unconfirmedOnlyAppliesAfterSent() {
+        SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
+        Object fragment = new Object();
+
+        assertTrue(dispatch.tryMarkPending(fragment));
+        dispatch.markUnconfirmed(fragment);
+        assertEquals("PENDING must not become UNCONFIRMED",
+                SplashEmbeddedDispatch.State.PENDING, dispatch.stateOf(fragment));
+    }
+
+    @Test
+    public void clearPendingDropsUnsentClaim() {
+        SplashEmbeddedDispatch dispatch = new SplashEmbeddedDispatch();
+        Object fragment = new Object();
+
+        assertTrue(dispatch.tryMarkPending(fragment));
+        dispatch.clearPending(fragment);
+        assertEquals(SplashEmbeddedDispatch.State.NONE, dispatch.stateOf(fragment));
+        assertTrue(dispatch.tryMarkPending(fragment));
+        dispatch.markSent(fragment);
+        dispatch.clearPending(fragment);
+        assertEquals("SENT must survive clearPending",
+                SplashEmbeddedDispatch.State.SENT, dispatch.stateOf(fragment));
     }
 
     @Test
@@ -76,7 +117,9 @@ public final class SplashEmbeddedDispatchTest {
 
         assertFalse(dispatch.tryMarkPending(null));
         dispatch.markSent(null);
-        dispatch.markRetryable(null);
+        dispatch.markDispatchFailed(null);
+        dispatch.markUnconfirmed(null);
+        dispatch.clearPending(null);
         assertEquals(SplashEmbeddedDispatch.State.NONE, dispatch.stateOf(null));
         assertEquals(SplashEmbeddedDispatch.State.NONE, dispatch.stateOf(new Object()));
         assertEquals(0, dispatch.trackedCount());

@@ -10,8 +10,10 @@ package io.github.yylsping.coolapkpurifier;
  * <p>Splash reports UI-layer truth only: the decision observer is a
  * diagnostic capability and never feeds availability; staticCoverage is the
  * {@link SplashCoveragePolicy} verdict of the activity/embedded UI cleaners,
- * while embeddedDispatchState reports the runtime finish-dispatch outcome
- * (NOT_SEEN/SENT/CONFIRMED/FAILED) as a separate signal.
+ * while embeddedDispatchState reports the latest runtime finish-dispatch
+ * transition snapshot (NOT_SEEN/SENT/REMOVAL_OBSERVED/UNCONFIRMED/
+ * DISPATCH_FAILED) as a separate signal. It is a point-in-time snapshot,
+ * not a terminal guarantee; later transitions are logged independently.
  */
 final class DynamicTrustedStatus {
     private DynamicTrustedStatus() {

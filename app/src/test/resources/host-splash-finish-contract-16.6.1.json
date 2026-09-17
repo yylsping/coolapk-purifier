@@ -1,0 +1,9 @@
+{
+  "hostPackage": "com.coolapk.market",
+  "hostVersionCode": 2608212,
+  "hostVersionName": "16.6.1",
+  "evidence": "SplashAdFragment decompilation: countdown end emits sdk_should_go_main via setFragmentResult; SDK close button emits ad_close; MainActivity/SplashAdActivity listeners only log the reason locally",
+  "resultKey": "SplashAd",
+  "reasonKey": "FINISH_REASON",
+  "normalExitReason": "sdk_should_go_main"
+}
