@@ -36,13 +36,15 @@ final class TargetProfile {
     final SameTopicTargetSpec sameTopic;
     final TopicDeviceTargetSpec topicDeviceRecommend;
     final AutoCommentTargetSpec autoComment;
+    final AutoCommentPromptTargetSpec autoCommentPrompt;
 
     private TargetProfile(long versionCode, String versionName, Status status,
                           DetailSponsorTargetSpec detailSponsor,
                           ReplySponsorTargetSpec replySponsor,
                           SameTopicTargetSpec sameTopic,
                           TopicDeviceTargetSpec topicDeviceRecommend,
-                          AutoCommentTargetSpec autoComment) {
+                          AutoCommentTargetSpec autoComment,
+                          AutoCommentPromptTargetSpec autoCommentPrompt) {
         this.versionCode = versionCode;
         this.versionName = versionName;
         this.status = status;
@@ -51,6 +53,7 @@ final class TargetProfile {
         this.sameTopic = sameTopic;
         this.topicDeviceRecommend = topicDeviceRecommend;
         this.autoComment = autoComment;
+        this.autoCommentPrompt = autoCommentPrompt;
     }
 
     static TargetProfile parse(JSONObject json) throws TargetManifest.ManifestException {
@@ -72,7 +75,7 @@ final class TargetProfile {
         // instead of being silently ignored.
         java.util.Set<String> known = new java.util.HashSet<>(java.util.Arrays.asList(
                 "detailSponsor", "replySponsor", "sameTopic",
-                "topicDeviceRecommend", "autoComment"));
+                "topicDeviceRecommend", "autoComment", "autoCommentPrompt"));
         for (java.util.Iterator<String> keys = targets.keys(); keys.hasNext(); ) {
             String key = keys.next();
             if (!known.contains(key)) {
@@ -85,7 +88,8 @@ final class TargetProfile {
                 ReplySponsorTargetSpec.parse(targets.optJSONObject("replySponsor")),
                 SameTopicTargetSpec.parse(targets.optJSONObject("sameTopic")),
                 TopicDeviceTargetSpec.parse(targets.optJSONObject("topicDeviceRecommend")),
-                AutoCommentTargetSpec.parse(targets.optJSONObject("autoComment")));
+                AutoCommentTargetSpec.parse(targets.optJSONObject("autoComment")),
+                AutoCommentPromptTargetSpec.parse(targets.optJSONObject("autoCommentPrompt")));
         if (status == Status.VALIDATED) {
             // A validated profile is a production contract: every
             // manifest-managed target must exist and be fully typed. Missing
@@ -95,6 +99,7 @@ final class TargetProfile {
             profile.requireComplete(profile.sameTopic, "sameTopic");
             profile.requireComplete(profile.topicDeviceRecommend, "topicDeviceRecommend");
             profile.requireComplete(profile.autoComment, "autoComment");
+            profile.requireComplete(profile.autoCommentPrompt, "autoCommentPrompt");
         }
         return profile;
     }

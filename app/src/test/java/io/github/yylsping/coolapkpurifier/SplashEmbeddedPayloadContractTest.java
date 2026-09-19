@@ -17,38 +17,62 @@ import java.util.Map;
 
 /**
  * Embedded splash finish-signal contract, pinned against the captured host
- * evidence fixture (16.6.1 SplashAdFragment). The fixture is parsed
- * structurally (flat JSON object) rather than substring-matched; the source
- * scan ties module constants back to the parsed values.
+ * evidence fixtures (16.6.1 and 16.6.2 SplashAdFragment). The fixtures are
+ * parsed structurally (flat JSON object) rather than substring-matched; the
+ * source scan ties module constants back to the parsed values.
  */
 public final class SplashEmbeddedPayloadContractTest {
-    private static final String FIXTURE = "host-splash-finish-contract-16.6.1.json";
+    private static final String[] FIXTURES = {
+            "host-splash-finish-contract-16.6.1.json",
+            "host-splash-finish-contract-16.6.2.json",
+    };
 
     @Test
-    public void hostContractFixturePinsNativePayload() throws IOException {
-        Map<String, String> fixture = parseFlatJsonObject(readFixture());
+    public void hostContractFixturesPinNativePayload() throws IOException {
+        Map<String, String> expectedVersions = new LinkedHashMap<>();
+        expectedVersions.put("host-splash-finish-contract-16.6.1.json", "2608212/16.6.1");
+        expectedVersions.put("host-splash-finish-contract-16.6.2.json", "2609151/16.6.2");
+        for (String fixtureName : FIXTURES) {
+            Map<String, String> fixture = parseFlatJsonObject(readFixture(fixtureName));
 
-        assertEquals("com.coolapk.market", fixture.get("hostPackage"));
-        assertEquals("2608212", fixture.get("hostVersionCode"));
-        assertEquals("16.6.1", fixture.get("hostVersionName"));
-        assertEquals("SplashAd", fixture.get("resultKey"));
-        assertEquals("FINISH_REASON", fixture.get("reasonKey"));
-        assertEquals("sdk_should_go_main", fixture.get("normalExitReason"));
-        assertFalse("fixture must not contain module-specific markers",
-                fixture.containsValue("purifier_ui_dismiss"));
+            assertEquals(fixtureName, "com.coolapk.market", fixture.get("hostPackage"));
+            String[] version = expectedVersions.get(fixtureName).split("/");
+            assertEquals(fixtureName, version[0], fixture.get("hostVersionCode"));
+            assertEquals(fixtureName, version[1], fixture.get("hostVersionName"));
+            assertEquals(fixtureName, "SplashAd", fixture.get("resultKey"));
+            assertEquals(fixtureName, "FINISH_REASON", fixture.get("reasonKey"));
+            assertEquals(fixtureName, "sdk_should_go_main", fixture.get("normalExitReason"));
+            assertFalse(fixtureName + " must not contain module-specific markers",
+                    fixture.containsValue("purifier_ui_dismiss"));
+        }
     }
 
     @Test
-    public void moduleConstantsMatchHostContractFixture() throws IOException {
-        Map<String, String> fixture = parseFlatJsonObject(readFixture());
-        String source = readMainSource("SplashEmbeddedHooks.java");
+    public void hostContractFixturesAgreeOnPayloadKeys() throws IOException {
+        Map<String, String> first = parseFlatJsonObject(readFixture(FIXTURES[0]));
+        for (int i = 1; i < FIXTURES.length; i++) {
+            Map<String, String> other = parseFlatJsonObject(readFixture(FIXTURES[i]));
+            assertEquals(FIXTURES[i] + " resultKey drifted",
+                    first.get("resultKey"), other.get("resultKey"));
+            assertEquals(FIXTURES[i] + " reasonKey drifted",
+                    first.get("reasonKey"), other.get("reasonKey"));
+            assertEquals(FIXTURES[i] + " normalExitReason drifted",
+                    first.get("normalExitReason"), other.get("normalExitReason"));
+        }
+    }
 
-        assertTrue("result key must match the host fixture",
-                source.contains("FRAGMENT_RESULT_KEY = \"" + fixture.get("resultKey") + "\""));
-        assertTrue("extra key must match the host fixture",
-                source.contains("EXTRA_FINISH_REASON = \"" + fixture.get("reasonKey") + "\""));
-        assertTrue("reason must be the host-native countdown-exit value",
-                source.contains("DISMISS_REASON = \"" + fixture.get("normalExitReason") + "\""));
+    @Test
+    public void moduleConstantsMatchHostContractFixtures() throws IOException {
+        String source = readMainSource("SplashEmbeddedHooks.java");
+        for (String fixtureName : FIXTURES) {
+            Map<String, String> fixture = parseFlatJsonObject(readFixture(fixtureName));
+            assertTrue("result key must match " + fixtureName,
+                    source.contains("FRAGMENT_RESULT_KEY = \"" + fixture.get("resultKey") + "\""));
+            assertTrue("extra key must match " + fixtureName,
+                    source.contains("EXTRA_FINISH_REASON = \"" + fixture.get("reasonKey") + "\""));
+            assertTrue("reason must be the host-native countdown-exit value in " + fixtureName,
+                    source.contains("DISMISS_REASON = \"" + fixture.get("normalExitReason") + "\""));
+        }
     }
 
     @Test
@@ -192,10 +216,10 @@ public final class SplashEmbeddedPayloadContractTest {
         return json.substring(start, pos[0]);
     }
 
-    private static String readFixture() throws IOException {
+    private static String readFixture(String fixtureName) throws IOException {
         InputStream in = SplashEmbeddedPayloadContractTest.class
-                .getClassLoader().getResourceAsStream(FIXTURE);
-        assertNotNull("missing test fixture " + FIXTURE, in);
+                .getClassLoader().getResourceAsStream(fixtureName);
+        assertNotNull("missing test fixture " + fixtureName, in);
         byte[] data;
         try (InputStream closeable = in) {
             data = readAll(closeable);

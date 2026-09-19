@@ -11,21 +11,43 @@ import org.junit.Test;
 
 /**
  * Manifest §8.4: every contract drift must end with no hook installed and a
- * structured, assertable result — never a best-effort hook.
+ * structured, assertable result — never a best-effort hook. D6 is a
+ * both-or-nothing pair: any single-layer failure leaves zero hooks behind.
  */
 public final class ManifestFailClosedTest {
     private static AutoCommentTargetSpec spec(String ownerClass, String methodName,
                                               String returnType, String... parameters)
             throws Exception {
+        return AutoCommentTargetSpec.parse(specJson(ownerClass, methodName,
+                returnType, parameters));
+    }
+
+    private static AutoCommentPromptTargetSpec promptSpec(String ownerClass,
+                                                          String methodName,
+                                                          String returnType,
+                                                          String... parameters)
+            throws Exception {
+        return AutoCommentPromptTargetSpec.parse(specJson(ownerClass, methodName,
+                returnType, parameters));
+    }
+
+    private static JSONObject specJson(String ownerClass, String methodName,
+                                       String returnType, String... parameters)
+            throws Exception {
         JSONArray parameterTypes = new JSONArray();
         for (String parameter : parameters) {
             parameterTypes.put(parameter);
         }
-        return AutoCommentTargetSpec.parse(new JSONObject()
+        return new JSONObject()
                 .put("ownerClass", ownerClass)
                 .put("methodName", methodName)
                 .put("returnType", returnType)
-                .put("parameterTypes", parameterTypes));
+                .put("parameterTypes", parameterTypes);
+    }
+
+    /** A controller-shaped spec that actually resolves and verifies on the JVM. */
+    private static AutoCommentTargetSpec resolvableControllerSpec() throws Exception {
+        return spec(Shapes.class.getName(), "exact", "void", "java.lang.Object");
     }
 
     @Test
@@ -85,31 +107,77 @@ public final class ManifestFailClosedTest {
     public void missingTargetSpecYieldsTargetMissing() {
         D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
         assertEquals(InstallResult.TARGET_MISSING,
-                delta.install(null, getClass().getClassLoader()));
+                delta.install(null, null, getClass().getClassLoader()));
+        assertFalse(delta.anyHookInstalled());
+    }
+
+    @Test
+    public void missingPromptSpecYieldsTargetMissingWithoutAnyHook() throws Exception {
+        // The controller layer alone is never enough: prompt missing fails the
+        // whole pair closed and installs nothing.
+        D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
+        assertEquals(InstallResult.TARGET_MISSING,
+                delta.install(resolvableControllerSpec(), null,
+                        getClass().getClassLoader()));
+        assertFalse(delta.anyHookInstalled());
     }
 
     @Test
     public void missingClassYieldsTargetMissing() {
-        // The bundled 16.6.1 owner class does not exist on the bootstrap
+        // The bundled 16.6.1 owner classes do not exist on the bootstrap
         // class loader, so the lookup must fail closed.
-        AutoCommentTargetSpec bundled = TestManifests.profile().autoComment;
+        TargetProfile bundled = TestManifests.profile();
         D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
         assertEquals(InstallResult.TARGET_MISSING,
-                delta.install(bundled, new ClassLoader(null) {
-                }));
+                delta.install(bundled.autoComment, bundled.autoCommentPrompt,
+                        new ClassLoader(null) {
+                        }));
+        assertFalse(delta.anyHookInstalled());
     }
 
     @Test
-    public void contractMismatchYieldsContractMismatch() {
+    public void controllerContractMismatchYieldsContractMismatch() {
         try {
             AutoCommentTargetSpec drifted = spec(Shapes.class.getName(), "returns",
                     "kotlin.Unit", "java.lang.Object");
             D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
             assertEquals(InstallResult.CONTRACT_MISMATCH,
-                    delta.install(drifted, getClass().getClassLoader()));
+                    delta.install(drifted, TestManifests.profile().autoCommentPrompt,
+                            getClass().getClassLoader()));
+            assertFalse(delta.anyHookInstalled());
         } catch (Exception failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    @Test
+    public void promptContractMismatchYieldsContractMismatchWithoutAnyHook() {
+        try {
+            // Controller layer valid; the prompt layer drifted on the return
+            // type. The pair must fail closed before any hook exists.
+            AutoCommentPromptTargetSpec driftedPrompt = promptSpec(
+                    Shapes.class.getName(), "returns", "kotlin.Unit", "java.lang.Object");
+            D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
+            assertEquals(InstallResult.CONTRACT_MISMATCH,
+                    delta.install(resolvableControllerSpec(), driftedPrompt,
+                            getClass().getClassLoader()));
+            assertFalse(delta.anyHookInstalled());
+        } catch (Exception failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    @Test
+    public void installationFailureLeavesNoResidualHook() throws Exception {
+        // module == null: the first module.hook call throws mid-install. The
+        // rollback must leave zero handles behind (both-or-nothing).
+        AutoCommentPromptTargetSpec prompt = promptSpec(Shapes.class.getName(),
+                "returns", "java.lang.Object", "java.lang.Object");
+        D6AutoCommentDelta delta = new D6AutoCommentDelta(null, new ModuleLog(null), null);
+        assertEquals(InstallResult.INSTALL_FAILED,
+                delta.install(resolvableControllerSpec(), prompt,
+                        getClass().getClassLoader()));
+        assertFalse(delta.anyHookInstalled());
     }
 
     @SuppressWarnings("unused")

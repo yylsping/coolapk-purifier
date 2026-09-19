@@ -6,6 +6,7 @@ import java.io.InputStream;
 /** Loads the real bundled target manifest for contract regression tests. */
 final class TestManifests {
     static final long COOLAPK_16_6_1 = 2_608_212L;
+    static final long COOLAPK_16_6_2 = 2_609_151L;
 
     private TestManifests() {
     }

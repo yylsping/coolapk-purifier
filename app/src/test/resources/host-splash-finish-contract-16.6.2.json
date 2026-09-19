@@ -1,0 +1,9 @@
+{
+  "hostPackage": "com.coolapk.market",
+  "hostVersionCode": 2609151,
+  "hostVersionName": "16.6.2",
+  "evidence": "16.6.2 runtime w02 dex disassembly: SplashAdFragment emits Bundle{FINISH_REASON=reason} via FragmentKt.setFragmentResult(\"SplashAd\") with event-bus fallback; countdown end passes sdk_should_go_main, SDK close button passes ad_close; MainActivity/SplashAdActivity setFragmentResultListener(\"SplashAd\") consumers only read FINISH_REASON for local logging and finish, with no reason-specific branching",
+  "resultKey": "SplashAd",
+  "reasonKey": "FINISH_REASON",
+  "normalExitReason": "sdk_should_go_main"
+}

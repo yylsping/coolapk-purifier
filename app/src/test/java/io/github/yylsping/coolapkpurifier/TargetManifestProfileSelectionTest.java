@@ -26,11 +26,21 @@ public final class TargetManifestProfileSelectionTest {
     }
 
     @Test
+    public void exactHitForCoolapk1662() {
+        TargetProfile profile = bundledRepository().validatedProfileFor(2_609_151L);
+        assertNotNull(profile);
+        assertEquals(2_609_151L, profile.versionCode);
+        assertEquals(TargetProfile.Status.VALIDATED, profile.status);
+    }
+
+    @Test
     public void adjacentVersionCodesDoNotMatch() {
         TargetManifestRepository repository = bundledRepository();
         // No nearest-version fallback in either direction.
         assertNull(repository.validatedProfileFor(2_608_211L));
         assertNull(repository.validatedProfileFor(2_608_213L));
+        assertNull(repository.validatedProfileFor(2_609_150L));
+        assertNull(repository.validatedProfileFor(2_609_152L));
     }
 
     @Test
@@ -45,6 +55,7 @@ public final class TargetManifestProfileSelectionTest {
     public void profileStatusIsDiagnostic() {
         TargetManifestRepository repository = bundledRepository();
         assertEquals("validated", repository.profileStatus(2_608_212L));
+        assertEquals("validated", repository.profileStatus(2_609_151L));
         assertEquals("missing", repository.profileStatus(9_999_999L));
     }
 

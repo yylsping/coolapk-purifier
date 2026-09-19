@@ -415,8 +415,37 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 profile == null ? null : profile.sameTopic, loader);
         installManifestFeature(PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND,
                 profile == null ? null : profile.topicDeviceRecommend, loader);
-        installManifestFeature(PurifierConfig.Feature.AUTO_COMMENT,
-                profile == null ? null : profile.autoComment, loader);
+        installAutoCommentFeature(profile, loader);
+    }
+
+    /**
+     * D6 is a two-layer contract: the observe-only controller callback plus
+     * the single terminal prompt-UI suppression point. Both come from the same
+     * validated profile and install both-or-nothing.
+     */
+    private void installAutoCommentFeature(TargetProfile profile, ClassLoader loader) {
+        PurifierConfig.Feature feature = PurifierConfig.Feature.AUTO_COMMENT;
+        if (!topology.isEnabledAtStart(feature)) {
+            // Recorded as DISABLED by the topology itself; prove it in logs.
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=DISABLED hookInstalled=false");
+            return;
+        }
+        InstallResult result = d6AutoCommentDelta.install(
+                profile == null ? null : profile.autoComment,
+                profile == null ? null : profile.autoCommentPrompt,
+                loader);
+        topology.recordInstallResult(feature, result);
+        if (result == InstallResult.INSTALLED) {
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    HookTopology.businessHookId(feature), "manifest_exact");
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    D6AutoCommentDelta.PROMPT_HOOK_ID, "manifest_exact");
+        }
+        log.info("feature=" + feature.key + " source=manifest_exact"
+                + " install=" + result
+                + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.ALREADY_INSTALLED));
     }
 
     private void installManifestFeature(PurifierConfig.Feature feature, Object spec,
@@ -436,8 +465,6 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             result = d3SameTopicReplacement.install((SameTopicTargetSpec) spec, loader);
         } else if (spec instanceof TopicDeviceTargetSpec) {
             result = d5TopicDeviceRecommendDelta.install((TopicDeviceTargetSpec) spec, loader);
-        } else if (spec instanceof AutoCommentTargetSpec) {
-            result = d6AutoCommentDelta.install((AutoCommentTargetSpec) spec, loader);
         } else {
             // Enabled, but no validated profile/target for this host version.
             result = topology.installResult(feature) != null

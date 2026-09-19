@@ -75,7 +75,7 @@ android {
     }
 
     sourceSets {
-        // Unit tests read the real bundled target manifest for the 16.6.1
+        // Unit tests read the real bundled target manifest for cross-version
         // contract regression instead of duplicating its values.
         getByName("test") {
             resources.srcDir("src/main/assets")

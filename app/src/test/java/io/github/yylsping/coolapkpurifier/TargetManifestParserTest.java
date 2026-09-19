@@ -80,6 +80,15 @@ public final class TargetManifestParserTest {
     }
 
     @Test
+    public void validatedProfileMissingAutoCommentPromptRejected() throws Exception {
+        // D6 is a pair: the prompt suppression point is as mandatory as the
+        // controller target in a validated profile.
+        org.json.JSONObject profile = new org.json.JSONObject(bundledValidatedProfileJson());
+        profile.getJSONObject("targets").remove("autoCommentPrompt");
+        assertRejected(bytes(manifestJson(profile.toString())));
+    }
+
+    @Test
     public void unknownTargetKeyRejected() throws Exception {
         org.json.JSONObject profile = new org.json.JSONObject(bundledValidatedProfileJson());
         profile.getJSONObject("targets").put("mysteryTarget", new org.json.JSONObject());
@@ -92,7 +101,7 @@ public final class TargetManifestParserTest {
     }
 
     @Test
-    public void bundledValidated1661ProfileHasAllFiveTargets() {
+    public void bundledValidated1661ProfileHasAllSixTargets() {
         TargetProfile profile = TestManifests.profile();
         assertEquals(TargetProfile.Status.VALIDATED, profile.status);
         assertTrue(profile.detailSponsor != null);
@@ -100,6 +109,7 @@ public final class TargetManifestParserTest {
         assertTrue(profile.sameTopic != null);
         assertTrue(profile.topicDeviceRecommend != null);
         assertTrue(profile.autoComment != null);
+        assertTrue(profile.autoCommentPrompt != null);
     }
 
     @Test
