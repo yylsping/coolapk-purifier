@@ -4,8 +4,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import androidx.compose.runtime.Composer;
+import androidx.compose.ui.Modifier;
 
 import com.coolapk.market.model.Feed;
+import com.coolapk.market.model.FeedTarget;
+import com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel;
 
 import java.lang.reflect.Method;
 
@@ -78,6 +81,43 @@ public final class D5TopicDeviceRecommend1662Test {
         Method bad = owner.getDeclaredMethod("ޓinst",
                 Feed.class, owner, Composer.class, int.class);
         assertFalse(ExactMethodVerifier.isExactTarget(specForMethod("ޓinst"), bad));
+    }
+
+    private static TopicDeviceUiTargetSpec productionUiSpec() {
+        TargetProfile profile =
+                TestManifests.manifest().validatedProfileFor(TestManifests.COOLAPK_16_6_2);
+        if (profile == null) {
+            throw new AssertionError("bundled manifest must validate 16.6.2");
+        }
+        return profile.topicDeviceRecommendUi;
+    }
+
+    @Test
+    public void acceptsCs4ShapedProductionUiContract() throws Exception {
+        TopicDeviceUiTargetSpec spec = productionUiSpec();
+        Class<?> owner = Class.forName("cs4");
+        Method exact = owner.getDeclaredMethod("ԭ",
+                Modifier.class, FeedTarget.class, FeedDetailV13ViewModel.class,
+                Composer.class, int.class);
+        assertTrue(ExactMethodVerifier.isExactTarget(spec, exact));
+    }
+
+    @Test
+    public void rejectsUiReturnTypeMismatch() throws Exception {
+        Class<?> owner = Class.forName("cs4");
+        Method bad = owner.getDeclaredMethod("ԭretmismatch",
+                Modifier.class, FeedTarget.class, FeedDetailV13ViewModel.class,
+                Composer.class, int.class);
+        assertFalse(ExactMethodVerifier.isExactTarget(productionUiSpec(), bad));
+    }
+
+    @Test
+    public void rejectsUiStaticModifierMismatch() throws Exception {
+        Class<?> owner = Class.forName("cs4");
+        Method bad = owner.getDeclaredMethod("ԭinst",
+                Modifier.class, FeedTarget.class, FeedDetailV13ViewModel.class,
+                Composer.class, int.class);
+        assertFalse(ExactMethodVerifier.isExactTarget(productionUiSpec(), bad));
     }
 
     private static final class WrongOwner1662 {

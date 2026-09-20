@@ -407,15 +407,73 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
     /** Manifest-managed installs: fail-closed, feature-aware, structured. */
     private void installManifestFeatures(TargetProfile profile, ClassLoader loader) {
-        installManifestFeature(PurifierConfig.Feature.DETAIL_SPONSOR,
-                profile == null ? null : profile.detailSponsor, loader);
+        installDetailSponsorFeature(profile, loader);
         installManifestFeature(PurifierConfig.Feature.REPLY_SPONSOR,
                 profile == null ? null : profile.replySponsor, loader);
         installManifestFeature(PurifierConfig.Feature.SAME_TOPIC_FEED,
                 profile == null ? null : profile.sameTopic, loader);
-        installManifestFeature(PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND,
-                profile == null ? null : profile.topicDeviceRecommend, loader);
+        installTopicDeviceFeature(profile, loader);
         installAutoCommentFeature(profile, loader);
+    }
+
+    /**
+     * D1 is a two-layer contract: the observe-only sponsor getter plus the
+     * exact sponsor-binder hide. Both come from the same validated profile
+     * and install both-or-nothing.
+     */
+    private void installDetailSponsorFeature(TargetProfile profile, ClassLoader loader) {
+        PurifierConfig.Feature feature = PurifierConfig.Feature.DETAIL_SPONSOR;
+        if (!topology.isEnabledAtStart(feature)) {
+            // Recorded as DISABLED by the topology itself; prove it in logs.
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=DISABLED hookInstalled=false");
+            return;
+        }
+        InstallResult result = d1DetailSponsorDelta.install(
+                profile == null ? null : profile.detailSponsor,
+                profile == null ? null : profile.detailSponsorUi,
+                loader);
+        topology.recordInstallResult(feature, result);
+        if (result == InstallResult.INSTALLED) {
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    HookTopology.businessHookId(feature), "manifest_exact");
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    D1DetailSponsorDelta.UI_HOOK_ID, "manifest_exact");
+        }
+        log.info("feature=" + feature.key + " source=manifest_exact"
+                + " install=" + result
+                + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.ALREADY_INSTALLED));
+    }
+
+    /**
+     * D5 is a two-layer contract: the observe-only compose assembler plus
+     * the single terminal target-row UI suppression point. Both come from
+     * the same validated profile and install both-or-nothing.
+     */
+    private void installTopicDeviceFeature(TargetProfile profile, ClassLoader loader) {
+        PurifierConfig.Feature feature = PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND;
+        if (!topology.isEnabledAtStart(feature)) {
+            // Recorded as DISABLED by the topology itself; prove it in logs.
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=DISABLED hookInstalled=false");
+            return;
+        }
+        InstallResult result = d5TopicDeviceRecommendDelta.install(
+                profile == null ? null : profile.topicDeviceRecommend,
+                profile == null ? null : profile.topicDeviceRecommendUi,
+                loader);
+        topology.recordInstallResult(feature, result);
+        if (result == InstallResult.INSTALLED) {
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    HookTopology.businessHookId(feature), "manifest_exact");
+            hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                    D5TopicDeviceRecommendDelta.UI_HOOK_ID, "manifest_exact");
+        }
+        log.info("feature=" + feature.key + " source=manifest_exact"
+                + " install=" + result
+                + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.ALREADY_INSTALLED));
     }
 
     /**
@@ -457,14 +515,10 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             return;
         }
         InstallResult result;
-        if (spec instanceof DetailSponsorTargetSpec) {
-            result = d1DetailSponsorDelta.install((DetailSponsorTargetSpec) spec, loader);
-        } else if (spec instanceof ReplySponsorTargetSpec) {
+        if (spec instanceof ReplySponsorTargetSpec) {
             result = d2ReplySponsorReplacement.install((ReplySponsorTargetSpec) spec, loader);
         } else if (spec instanceof SameTopicTargetSpec) {
             result = d3SameTopicReplacement.install((SameTopicTargetSpec) spec, loader);
-        } else if (spec instanceof TopicDeviceTargetSpec) {
-            result = d5TopicDeviceRecommendDelta.install((TopicDeviceTargetSpec) spec, loader);
         } else {
             // Enabled, but no validated profile/target for this host version.
             result = topology.installResult(feature) != null

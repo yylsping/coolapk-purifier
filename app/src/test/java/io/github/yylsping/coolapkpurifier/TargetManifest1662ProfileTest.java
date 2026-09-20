@@ -27,6 +27,17 @@ public final class TargetManifest1662ProfileTest {
     }
 
     @Test
+    public void detailSponsorUiDescriptorUnchangedFrom1661() {
+        DetailSponsorUiTargetSpec spec = profile1662().detailSponsorUi;
+        assertEquals("Lcom/coolapk/market/view/ad/ֈ;->ވ(Ljava/lang/Object;)V",
+                spec.descriptor());
+        assertEquals("ކ", spec.layoutField);
+        assertEquals("sponsorForFeedDetail", spec.entityTemplate);
+        assertEquals("com.coolapk.market.model.Entity", spec.entityClass);
+        assertEquals("com.coolapk.market.view.ad.EntityAdHelper", spec.adHelperClass);
+    }
+
+    @Test
     public void replySponsorDescriptorUsesAdjudicatedQx4() {
         ReplySponsorTargetSpec spec = profile1662().replySponsor;
         assertEquals("Lqx4;->ވ(Ljava/lang/Object;)V", spec.descriptor());
@@ -55,6 +66,15 @@ public final class TargetManifest1662ProfileTest {
         assertEquals("Lvb4;->ޓ(Lcom/coolapk/market/model/Feed;Lvb4;"
                         + "Landroidx/compose/runtime/Composer;I)Lkotlin/Unit;",
                 profile1662().topicDeviceRecommend.descriptor());
+    }
+
+    @Test
+    public void topicDeviceRecommendUiDescriptorUsesCs4() {
+        assertEquals("Lcs4;->ԭ(Landroidx/compose/ui/Modifier;"
+                        + "Lcom/coolapk/market/model/FeedTarget;"
+                        + "Lcom/coolapk/market/view/feed/reply/FeedDetailV13ViewModel;"
+                        + "Landroidx/compose/runtime/Composer;I)V",
+                profile1662().topicDeviceRecommendUi.descriptor());
     }
 
     @Test

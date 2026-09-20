@@ -89,6 +89,24 @@ public final class TargetManifestParserTest {
     }
 
     @Test
+    public void validatedProfileMissingTopicDeviceRecommendUiRejected() throws Exception {
+        // D5 is a pair: the terminal UI suppression point is as mandatory as
+        // the observe-only assembler target in a validated profile.
+        org.json.JSONObject profile = new org.json.JSONObject(bundledValidatedProfileJson());
+        profile.getJSONObject("targets").remove("topicDeviceRecommendUi");
+        assertRejected(bytes(manifestJson(profile.toString())));
+    }
+
+    @Test
+    public void validatedProfileMissingDetailSponsorUiRejected() throws Exception {
+        // D1 is a pair: the exact binder-hide point is as mandatory as the
+        // observe-only getter target in a validated profile.
+        org.json.JSONObject profile = new org.json.JSONObject(bundledValidatedProfileJson());
+        profile.getJSONObject("targets").remove("detailSponsorUi");
+        assertRejected(bytes(manifestJson(profile.toString())));
+    }
+
+    @Test
     public void unknownTargetKeyRejected() throws Exception {
         org.json.JSONObject profile = new org.json.JSONObject(bundledValidatedProfileJson());
         profile.getJSONObject("targets").put("mysteryTarget", new org.json.JSONObject());
@@ -101,13 +119,15 @@ public final class TargetManifestParserTest {
     }
 
     @Test
-    public void bundledValidated1661ProfileHasAllSixTargets() {
+    public void bundledValidated1661ProfileHasAllEightTargets() {
         TargetProfile profile = TestManifests.profile();
         assertEquals(TargetProfile.Status.VALIDATED, profile.status);
         assertTrue(profile.detailSponsor != null);
+        assertTrue(profile.detailSponsorUi != null);
         assertTrue(profile.replySponsor != null);
         assertTrue(profile.sameTopic != null);
         assertTrue(profile.topicDeviceRecommend != null);
+        assertTrue(profile.topicDeviceRecommendUi != null);
         assertTrue(profile.autoComment != null);
         assertTrue(profile.autoCommentPrompt != null);
     }

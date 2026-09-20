@@ -11,6 +11,17 @@
           "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
           "methodName": "getDetailSponsorCard",
           "returnType": "com.coolapk.market.model.Entity"
+        },        "detailSponsorUi": {
+          "kind": "detailSponsorUi",
+          "ownerClass": "com.coolapk.market.view.ad.ֈ",
+          "methodName": "ވ",
+          "layoutField": "ކ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "sponsorForFeedDetail",
+          "adHelperClass": "com.coolapk.market.view.ad.EntityAdHelper",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
         },
         "replySponsor": {
           "kind": "replySponsor",
@@ -67,6 +78,19 @@
             "kotlin.ranges.IntRange"
           ],
           "returnType": "kotlin.Unit"
+        },
+        "topicDeviceRecommendUi": {
+          "kind": "staticAssembler",
+          "ownerClass": "qh4",
+          "methodName": "ԯ",
+          "parameterTypes": [
+            "androidx.compose.ui.Modifier",
+            "com.coolapk.market.model.FeedTarget",
+            "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ],
+          "returnType": "void"
         }
       }
     },
@@ -80,6 +104,17 @@
           "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
           "methodName": "getDetailSponsorCard",
           "returnType": "com.coolapk.market.model.Entity"
+        },        "detailSponsorUi": {
+          "kind": "detailSponsorUi",
+          "ownerClass": "com.coolapk.market.view.ad.ֈ",
+          "methodName": "ވ",
+          "layoutField": "ކ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "sponsorForFeedDetail",
+          "adHelperClass": "com.coolapk.market.view.ad.EntityAdHelper",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
         },
         "replySponsor": {
           "kind": "replySponsor",
@@ -136,6 +171,19 @@
             "kotlin.ranges.IntRange"
           ],
           "returnType": "kotlin.Unit"
+        },
+        "topicDeviceRecommendUi": {
+          "kind": "staticAssembler",
+          "ownerClass": "cs4",
+          "methodName": "ԭ",
+          "parameterTypes": [
+            "androidx.compose.ui.Modifier",
+            "com.coolapk.market.model.FeedTarget",
+            "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ],
+          "returnType": "void"
         }
       }
     }
