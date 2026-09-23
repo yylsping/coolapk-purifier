@@ -1,12 +1,14 @@
 package io.github.yylsping.coolapkpurifier;
 
 import android.annotation.SuppressLint;
+import android.util.SparseArray;
 import android.view.View;
 import android.view.ViewGroup;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -310,13 +312,15 @@ final class RelatedDataDelta {
             }
             if (enabled) {
                 runtime.controller.update(holder, true);
+                runtime.controller.collapseResidualSpacingAfterLayout(holder, log, name);
                 int suppressed = suppressedCounter.incrementAndGet();
                 if (exposureLedger != null) {
                     exposureLedger.recordModified(PurifierConfig.Feature.RELATED_DATA);
                 }
                 if (suppressedLogged.compareAndSet(false, true)) {
                     log.info("related_" + name + "_ui_suppressed=true count=" + suppressed
-                            + " visibility=gone minimumHeight=0 layoutHeight=0");
+                            + " visibility=gone minimumHeight=0 layoutHeight=0"
+                            + " residualSpacingScheduled=true");
                 }
             }
             if (observed % SUMMARY_EVERY == 0) {
@@ -358,13 +362,16 @@ final class RelatedDataDelta {
             }
             if (enabled) {
                 runtime.controller.update(holder, true);
+                runtime.controller.collapseResidualSpacingAfterLayout(
+                        holder, log, "content_section");
                 int suppressed = contentSuppressedCount.incrementAndGet();
                 if (exposureLedger != null) {
                     exposureLedger.recordModified(PurifierConfig.Feature.RELATED_DATA);
                 }
                 if (contentSuppressedLogged.compareAndSet(false, true)) {
                     log.info("related_content_section_ui_suppressed=true count=" + suppressed
-                            + " visibility=gone minimumHeight=0 layoutHeight=0");
+                            + " visibility=gone minimumHeight=0 layoutHeight=0"
+                            + " residualSpacingScheduled=true");
                 }
             }
             if (observed % SUMMARY_EVERY == 0) {
@@ -649,6 +656,9 @@ final class RelatedDataDelta {
     static final class HolderController {
         private final Field itemViewField;
         private final Map<View, ViewState> collapsed = new WeakHashMap<>();
+        private final Map<View, DecorationState> spacingAdjustments =
+                new WeakHashMap<>();
+        private final AtomicBoolean spacingLogged = new AtomicBoolean();
 
         HolderController(Field itemViewField) {
             if (itemViewField == null || itemViewField.getType() != View.class) {
@@ -666,6 +676,10 @@ final class RelatedDataDelta {
             }
             View itemView = (View) candidate;
             if (!collapse) {
+                DecorationState adjustment = spacingAdjustments.remove(itemView);
+                if (adjustment != null) {
+                    adjustment.restore();
+                }
                 ViewState state = collapsed.remove(itemView);
                 if (state != null) {
                     state.restore(itemView);
@@ -678,10 +692,327 @@ final class RelatedDataDelta {
             itemView.setVisibility(View.GONE);
             itemView.setMinimumHeight(0);
             ViewGroup.LayoutParams params = itemView.getLayoutParams();
+            boolean layoutChanged = false;
             if (params != null && params.height != 0) {
                 params.height = 0;
+                layoutChanged = true;
+            }
+            if (params instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams margins =
+                        (ViewGroup.MarginLayoutParams) params;
+                if (margins.topMargin != 0 || margins.bottomMargin != 0) {
+                    margins.topMargin = 0;
+                    margins.bottomMargin = 0;
+                    layoutChanged = true;
+                }
+            }
+            if (params != null && layoutChanged) {
                 itemView.setLayoutParams(params);
             }
+        }
+
+        void collapseResidualSpacingAfterLayout(Object holder, ModuleLog log, String label) {
+            if (holder == null || log == null) {
+                return;
+            }
+            try {
+                Object candidate = itemViewField.get(holder);
+                if (!(candidate instanceof View)) {
+                    return;
+                }
+                View itemView = (View) candidate;
+                itemView.post(() -> collapseResidualSpacing(itemView, log, label));
+            } catch (Throwable failure) {
+                log.error("related residual spacing scheduling failed", failure);
+            }
+        }
+
+        private void collapseResidualSpacing(View itemView, ModuleLog log, String label) {
+            try {
+                synchronized (this) {
+                    if (!collapsed.containsKey(itemView)) {
+                        return;
+                    }
+                }
+                if (!(itemView.getParent() instanceof ViewGroup)) {
+                    return;
+                }
+                ViewGroup group = (ViewGroup) itemView.getParent();
+                int childIndex = group.indexOfChild(itemView);
+                if (childIndex < 0) {
+                    return;
+                }
+                View previous = childIndex > 0 ? group.getChildAt(childIndex - 1) : null;
+                View next = childIndex + 1 < group.getChildCount()
+                        ? group.getChildAt(childIndex + 1) : null;
+                int topGap = previous == null ? 0
+                        : Math.max(0, itemView.getTop() - previous.getBottom());
+                int bottomGap = next == null ? 0
+                        : Math.max(0, next.getTop() - itemView.getBottom());
+                synchronized (this) {
+                    if (spacingAdjustments.containsKey(itemView)) {
+                        return;
+                    }
+                }
+                DecorationState adjustment = DecorationState.suppress(
+                        group, itemView, topGap, bottomGap);
+                if (adjustment == null) {
+                    return;
+                }
+                synchronized (this) {
+                    spacingAdjustments.put(itemView, adjustment);
+                }
+                adjustment.invalidate();
+                boolean logThisCollapse = spacingLogged.compareAndSet(false, true);
+                if (logThisCollapse) {
+                    log.info("related_residual_spacing_collapsed=true subtype=" + label
+                            + " topGapPx=" + topGap
+                            + " bottomGapPx=" + bottomGap
+                            + " dividerEntries=" + adjustment.entries.size());
+                }
+                itemView.post(() -> settleResidualSpacing(
+                        itemView, log, label, adjustment, 2, logThisCollapse));
+            } catch (Throwable failure) {
+                log.error("related residual spacing collapse failed", failure);
+            }
+        }
+
+        private void settleResidualSpacing(View itemView, ModuleLog log, String label,
+                                           DecorationState expectedState,
+                                           int attemptsRemaining, boolean logResult) {
+            try {
+                synchronized (this) {
+                    if (!collapsed.containsKey(itemView)
+                            || spacingAdjustments.get(itemView) != expectedState) {
+                        return;
+                    }
+                }
+                if (!(itemView.getParent() instanceof ViewGroup)) {
+                    return;
+                }
+                ViewGroup group = (ViewGroup) itemView.getParent();
+                int childIndex = group.indexOfChild(itemView);
+                if (childIndex <= 0 || childIndex + 1 >= group.getChildCount()) {
+                    return;
+                }
+                View previous = group.getChildAt(childIndex - 1);
+                View next = group.getChildAt(childIndex + 1);
+                int topGap = Math.max(0, itemView.getTop() - previous.getBottom());
+                int bottomGap = Math.max(0, next.getTop() - itemView.getBottom());
+                int remaining = Math.max(0, next.getTop() - previous.getBottom());
+                if (remaining > 0 && attemptsRemaining > 0) {
+                    DecorationState additional = DecorationState.suppress(
+                            group, itemView, topGap, bottomGap);
+                    if (additional != null) {
+                        expectedState.append(additional);
+                        additional.invalidate();
+                        itemView.post(() -> settleResidualSpacing(
+                                itemView, log, label, expectedState,
+                                attemptsRemaining - 1, logResult));
+                        return;
+                    }
+                }
+                if (logResult) {
+                    log.info("related_residual_spacing_settled=true subtype=" + label
+                            + " remainingGapPx=" + remaining
+                            + " dividerEntries=" + expectedState.entries.size()
+                            + spacingGeometry(itemView));
+                }
+            } catch (Throwable failure) {
+                log.error("related residual spacing settle failed", failure);
+            }
+        }
+
+        private static String spacingGeometry(View itemView) {
+            if (itemView == null || !(itemView.getParent() instanceof ViewGroup)) {
+                return " unavailable=true";
+            }
+            ViewGroup group = (ViewGroup) itemView.getParent();
+            int childIndex = group.indexOfChild(itemView);
+            if (childIndex < 0) {
+                return " detached=true";
+            }
+            View previous = childIndex > 0 ? group.getChildAt(childIndex - 1) : null;
+            View next = childIndex + 1 < group.getChildCount()
+                    ? group.getChildAt(childIndex + 1) : null;
+            return " previousBottom=" + (previous == null ? -1 : previous.getBottom())
+                    + " targetTop=" + itemView.getTop()
+                    + " targetBottom=" + itemView.getBottom()
+                    + " nextTop=" + (next == null ? -1 : next.getTop());
+        }
+    }
+
+    /**
+     * Replaces only the two cached host dividers adjacent to an exact collapsed item.
+     * The host's own zero-height divider singleton is reused, so offset calculation and
+     * drawing agree. Cache entries are restored by identity before the holder is reused.
+     */
+    private static final class DecorationState {
+        final ViewGroup parent;
+        final Method invalidateItemDecorations;
+        final List<DecorationCacheEntry> entries;
+
+        DecorationState(ViewGroup parent, Method invalidateItemDecorations,
+                        List<DecorationCacheEntry> entries) {
+            this.parent = parent;
+            this.invalidateItemDecorations = invalidateItemDecorations;
+            this.entries = entries;
+        }
+
+        static DecorationState suppress(ViewGroup parent, View target,
+                                        int topGap, int bottomGap) throws Exception {
+            if (topGap <= 0 && bottomGap <= 0) {
+                return null;
+            }
+            Class<?> parentClass = parent.getClass();
+            Method positionMethod = parentClass.getMethod(
+                    "getChildAdapterPosition", View.class);
+            Method countMethod = parentClass.getMethod("getItemDecorationCount");
+            Method atMethod = parentClass.getMethod("getItemDecorationAt", int.class);
+            Method invalidateMethod = parentClass.getMethod("invalidateItemDecorations");
+            int targetPosition = ((Number) positionMethod.invoke(parent, target)).intValue();
+            if (targetPosition <= 0) {
+                return null;
+            }
+            int decorationCount = ((Number) countMethod.invoke(parent)).intValue();
+            List<DecorationCacheEntry> entries = new ArrayList<>();
+            for (int index = 0; index < decorationCount; index++) {
+                Object decoration = atMethod.invoke(parent, index);
+                collectDividerEntries(decoration, targetPosition, topGap, bottomGap, entries);
+            }
+            if (entries.isEmpty()) {
+                return null;
+            }
+            return new DecorationState(parent, invalidateMethod, entries);
+        }
+
+        private static void collectDividerEntries(Object decoration, int targetPosition,
+                                                  int topGap, int bottomGap,
+                                                  List<DecorationCacheEntry> entries)
+                throws IllegalAccessException {
+            for (Class<?> type = decoration.getClass(); type != null;
+                 type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    if (!SparseArray.class.isAssignableFrom(field.getType())) {
+                        continue;
+                    }
+                    field.setAccessible(true);
+                    Object candidate = field.get(decoration);
+                    if (!(candidate instanceof SparseArray)) {
+                        continue;
+                    }
+                    @SuppressWarnings("unchecked")
+                    SparseArray<Object> cache = (SparseArray<Object>) candidate;
+                    collectDividerEntry(cache, targetPosition - 1, topGap, entries);
+                    collectDividerEntry(cache, targetPosition, bottomGap, entries);
+                }
+            }
+        }
+
+        private static void collectDividerEntry(SparseArray<Object> cache, int position,
+                                                int expectedHeight,
+                                                List<DecorationCacheEntry> entries)
+                throws IllegalAccessException {
+            if (expectedHeight <= 0 || cache.indexOfKey(position) < 0) {
+                return;
+            }
+            Object original = cache.get(position);
+            // DividerData has an optional boxed color; the sibling margin cache does not.
+            // Matching the measured pixel height keeps this structural lookup fail-closed.
+            if (original == null || dividerHeight(original) != expectedHeight
+                    || !hasBoxedIntegerField(original.getClass())) {
+                return;
+            }
+            Object replacement = findZeroDivider(original.getClass());
+            if (replacement == null) {
+                return;
+            }
+            cache.put(position, replacement);
+            entries.add(new DecorationCacheEntry(
+                    cache, position, original, replacement));
+        }
+
+        private static int dividerHeight(Object value) throws IllegalAccessException {
+            int maximum = Integer.MIN_VALUE;
+            for (Field field : value.getClass().getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers()) || field.getType() != int.class) {
+                    continue;
+                }
+                field.setAccessible(true);
+                maximum = Math.max(maximum, field.getInt(value));
+            }
+            return maximum;
+        }
+
+        private static boolean hasBoxedIntegerField(Class<?> type) {
+            for (Field field : type.getDeclaredFields()) {
+                if (!Modifier.isStatic(field.getModifiers())
+                        && field.getType() == Integer.class) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static Object findZeroDivider(Class<?> type) throws IllegalAccessException {
+            for (Field field : type.getDeclaredFields()) {
+                if (!Modifier.isStatic(field.getModifiers())
+                        || !type.isAssignableFrom(field.getType())) {
+                    continue;
+                }
+                field.setAccessible(true);
+                Object candidate = field.get(null);
+                if (candidate != null && dividerHeight(candidate) == 0) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        void invalidate() throws Exception {
+            invalidateItemDecorations.invoke(parent);
+        }
+
+        void append(DecorationState additional) {
+            if (additional.parent == parent) {
+                entries.addAll(additional.entries);
+            }
+        }
+
+        void restore() {
+            for (DecorationCacheEntry entry : entries) {
+                entry.restore();
+            }
+            try {
+                invalidateItemDecorations.invoke(parent);
+            } catch (Throwable ignored) {
+                parent.requestLayout();
+            }
+        }
+    }
+
+    static final class DecorationCacheEntry {
+        final SparseArray<Object> cache;
+        final int position;
+        final Object original;
+        final Object replacement;
+
+        DecorationCacheEntry(SparseArray<Object> cache, int position,
+                             Object original, Object replacement) {
+            this.cache = cache;
+            this.position = position;
+            this.original = original;
+            this.replacement = replacement;
+        }
+
+        void restore() {
+            if (ownsReplacement(cache.get(position), replacement)) {
+                cache.put(position, original);
+            }
+        }
+
+        static boolean ownsReplacement(Object current, Object replacement) {
+            return current == replacement;
         }
     }
 
@@ -689,26 +1020,56 @@ final class RelatedDataDelta {
         final int visibility;
         final int minimumHeight;
         final int layoutHeight;
+        final int topMargin;
+        final int bottomMargin;
 
-        ViewState(int visibility, int minimumHeight, int layoutHeight) {
+        ViewState(int visibility, int minimumHeight, int layoutHeight,
+                  int topMargin, int bottomMargin) {
             this.visibility = visibility;
             this.minimumHeight = minimumHeight;
             this.layoutHeight = layoutHeight;
+            this.topMargin = topMargin;
+            this.bottomMargin = bottomMargin;
         }
 
         static ViewState capture(View view) {
             ViewGroup.LayoutParams params = view.getLayoutParams();
+            int topMargin = Integer.MIN_VALUE;
+            int bottomMargin = Integer.MIN_VALUE;
+            if (params instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams margins =
+                        (ViewGroup.MarginLayoutParams) params;
+                topMargin = margins.topMargin;
+                bottomMargin = margins.bottomMargin;
+            }
             return new ViewState(view.getVisibility(), view.getMinimumHeight(),
-                    params == null ? Integer.MIN_VALUE : params.height);
+                    params == null ? Integer.MIN_VALUE : params.height,
+                    topMargin, bottomMargin);
         }
 
         void restore(View view) {
             view.setVisibility(visibility);
             view.setMinimumHeight(minimumHeight);
             ViewGroup.LayoutParams params = view.getLayoutParams();
+            boolean layoutChanged = false;
             if (params != null && layoutHeight != Integer.MIN_VALUE
                     && params.height != layoutHeight) {
                 params.height = layoutHeight;
+                layoutChanged = true;
+            }
+            if (params instanceof ViewGroup.MarginLayoutParams
+                    && topMargin != Integer.MIN_VALUE
+                    && bottomMargin != Integer.MIN_VALUE) {
+                ViewGroup.MarginLayoutParams margins =
+                        (ViewGroup.MarginLayoutParams) params;
+                if (margins.topMargin != topMargin
+                        || margins.bottomMargin != bottomMargin) {
+                    margins.topMargin = topMargin;
+                    margins.bottomMargin = bottomMargin;
+                    layoutChanged = true;
+                }
+            }
+            if (params != null && layoutChanged) {
                 view.setLayoutParams(params);
             }
         }

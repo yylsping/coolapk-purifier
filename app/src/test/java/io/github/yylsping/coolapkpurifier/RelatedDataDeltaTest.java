@@ -156,8 +156,11 @@ public final class RelatedDataDeltaTest {
         RelatedDataDelta.IconRuntime runtime = fixtureIconRuntime();
         View view = new StatefulView();
         view.setMinimumHeight(13);
-        ViewGroup.LayoutParams iconParams = new ViewGroup.LayoutParams(100, 77);
+        ViewGroup.MarginLayoutParams iconParams =
+                new ViewGroup.MarginLayoutParams(100, 77);
         iconParams.height = 77;
+        iconParams.topMargin = 11;
+        iconParams.bottomMargin = 17;
         view.setLayoutParams(iconParams);
         FixtureIconHolder holder = new FixtureIconHolder(
                 view, null, new FixtureHostFragment());
@@ -170,6 +173,8 @@ public final class RelatedDataDeltaTest {
         assertEquals(View.GONE, view.getVisibility());
         assertEquals(0, view.getMinimumHeight());
         assertEquals(0, view.getLayoutParams().height);
+        assertEquals(0, ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin);
+        assertEquals(0, ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).bottomMargin);
 
         FakeChain disabled = new FakeChain(holder, null, card);
         delta.onIconUi(disabled, false, runtime);
@@ -177,6 +182,8 @@ public final class RelatedDataDeltaTest {
         assertEquals(View.VISIBLE, view.getVisibility());
         assertEquals(13, view.getMinimumHeight());
         assertEquals(77, view.getLayoutParams().height);
+        assertEquals(11, ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin);
+        assertEquals(17, ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).bottomMargin);
     }
 
     @Test
@@ -203,6 +210,17 @@ public final class RelatedDataDeltaTest {
         assertEquals(0, view.getLayoutParams().height);
         assertTrue(delta.summaryLine().contains(
                 "related_content_section_ui_suppressed=1"));
+    }
+
+    @Test
+    public void dividerCacheRestoreRequiresOwnedReplacement() {
+        Object replacement = new Object();
+        Object hostRefresh = new Object();
+
+        assertTrue(RelatedDataDelta.DecorationCacheEntry.ownsReplacement(
+                replacement, replacement));
+        assertFalse(RelatedDataDelta.DecorationCacheEntry.ownsReplacement(
+                hostRefresh, replacement));
     }
 
     private RelatedDataDelta.IconRuntime fixtureIconRuntime() throws Exception {
