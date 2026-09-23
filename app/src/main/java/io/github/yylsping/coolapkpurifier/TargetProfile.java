@@ -39,6 +39,9 @@ final class TargetProfile {
     final TopicDeviceUiTargetSpec topicDeviceRecommendUi;
     final AutoCommentTargetSpec autoComment;
     final AutoCommentPromptTargetSpec autoCommentPrompt;
+    final RelatedDataTargetSpec relatedData;
+    final RelatedIconListUiTargetSpec relatedIconListUi;
+    final RelatedContentUiTargetSpec relatedContentUi;
 
     private TargetProfile(long versionCode, String versionName, Status status,
                           DetailSponsorTargetSpec detailSponsor,
@@ -48,7 +51,10 @@ final class TargetProfile {
                           TopicDeviceTargetSpec topicDeviceRecommend,
                           TopicDeviceUiTargetSpec topicDeviceRecommendUi,
                           AutoCommentTargetSpec autoComment,
-                          AutoCommentPromptTargetSpec autoCommentPrompt) {
+                          AutoCommentPromptTargetSpec autoCommentPrompt,
+                          RelatedDataTargetSpec relatedData,
+                          RelatedIconListUiTargetSpec relatedIconListUi,
+                          RelatedContentUiTargetSpec relatedContentUi) {
         this.versionCode = versionCode;
         this.versionName = versionName;
         this.status = status;
@@ -60,6 +66,9 @@ final class TargetProfile {
         this.topicDeviceRecommendUi = topicDeviceRecommendUi;
         this.autoComment = autoComment;
         this.autoCommentPrompt = autoCommentPrompt;
+        this.relatedData = relatedData;
+        this.relatedIconListUi = relatedIconListUi;
+        this.relatedContentUi = relatedContentUi;
     }
 
     static TargetProfile parse(JSONObject json) throws TargetManifest.ManifestException {
@@ -82,7 +91,8 @@ final class TargetProfile {
         java.util.Set<String> known = new java.util.HashSet<>(java.util.Arrays.asList(
                 "detailSponsor", "detailSponsorUi", "replySponsor", "sameTopic",
                 "topicDeviceRecommend", "topicDeviceRecommendUi",
-                "autoComment", "autoCommentPrompt"));
+                "autoComment", "autoCommentPrompt", "relatedData",
+                "relatedIconListUi", "relatedContentUi"));
         for (java.util.Iterator<String> keys = targets.keys(); keys.hasNext(); ) {
             String key = keys.next();
             if (!known.contains(key)) {
@@ -98,7 +108,10 @@ final class TargetProfile {
                 TopicDeviceTargetSpec.parse(targets.optJSONObject("topicDeviceRecommend")),
                 TopicDeviceUiTargetSpec.parse(targets.optJSONObject("topicDeviceRecommendUi")),
                 AutoCommentTargetSpec.parse(targets.optJSONObject("autoComment")),
-                AutoCommentPromptTargetSpec.parse(targets.optJSONObject("autoCommentPrompt")));
+                AutoCommentPromptTargetSpec.parse(targets.optJSONObject("autoCommentPrompt")),
+                RelatedDataTargetSpec.parse(targets.optJSONObject("relatedData")),
+                RelatedIconListUiTargetSpec.parse(targets.optJSONObject("relatedIconListUi")),
+                RelatedContentUiTargetSpec.parse(targets.optJSONObject("relatedContentUi")));
         if (status == Status.VALIDATED) {
             // A validated profile is a production contract: every
             // manifest-managed target must exist and be fully typed. Missing
@@ -111,6 +124,10 @@ final class TargetProfile {
             profile.requireComplete(profile.topicDeviceRecommendUi, "topicDeviceRecommendUi");
             profile.requireComplete(profile.autoComment, "autoComment");
             profile.requireComplete(profile.autoCommentPrompt, "autoCommentPrompt");
+            // The observe-only getter is mandatory. UI subtype targets are
+            // intentionally independent: a validated profile may represent
+            // honest PARTIAL coverage by omitting an unavailable subtype.
+            profile.requireComplete(profile.relatedData, "relatedData");
         }
         return profile;
     }

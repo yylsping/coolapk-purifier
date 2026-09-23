@@ -119,7 +119,7 @@ public final class TargetManifestParserTest {
     }
 
     @Test
-    public void bundledValidated1661ProfileHasAllEightTargets() {
+    public void bundledValidated1661ProfileHasAllTargets() {
         TargetProfile profile = TestManifests.profile();
         assertEquals(TargetProfile.Status.VALIDATED, profile.status);
         assertTrue(profile.detailSponsor != null);
@@ -130,6 +130,27 @@ public final class TargetManifestParserTest {
         assertTrue(profile.topicDeviceRecommendUi != null);
         assertTrue(profile.autoComment != null);
         assertTrue(profile.autoCommentPrompt != null);
+        assertTrue(profile.relatedData != null);
+        assertTrue(profile.relatedIconListUi != null);
+        assertTrue(profile.relatedContentUi != null);
+    }
+
+    @Test
+    public void validatedProfileRequiresGetterButAllowsIndependentUiPartial() throws Exception {
+        org.json.JSONObject missingGetter =
+                new org.json.JSONObject(bundledValidatedProfileJson());
+        missingGetter.getJSONObject("targets").remove("relatedData");
+        assertRejected(bytes(manifestJson(missingGetter.toString())));
+
+        org.json.JSONObject partial =
+                new org.json.JSONObject(bundledValidatedProfileJson());
+        partial.getJSONObject("targets").remove("relatedIconListUi");
+        TargetManifest parsed = TargetManifest.parse(
+                bytes(manifestJson(partial.toString())));
+        TargetProfile profile = parsed.validatedProfileFor(TestManifests.COOLAPK_16_6_1);
+        assertTrue(profile != null);
+        assertNull(profile.relatedIconListUi);
+        assertTrue(profile.relatedContentUi != null);
     }
 
     @Test

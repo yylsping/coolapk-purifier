@@ -96,6 +96,25 @@ public final class TargetManifest1662ProfileTest {
     }
 
     @Test
+    public void relatedDataDescriptorsAreExactAndUnchangedFrom1661() {
+        TargetProfile profile = profile1662();
+        assertEquals("Lcom/coolapk/market/model/$$AutoValue_Feed;->"
+                        + "getRelatedData()Ljava/util/List;",
+                profile.relatedData.descriptor());
+        assertEquals("Lcom/coolapk/market/viewholder/ޕ;->ވ(Ljava/lang/Object;)V",
+                profile.relatedIconListUi.descriptor());
+        assertEquals("com.coolapk.market.viewholder.ؠ",
+                profile.relatedIconListUi.holderClass);
+        assertEquals("iconListCard", profile.relatedIconListUi.cardTemplate);
+        assertEquals("goods", profile.relatedIconListUi.promotionEntityType);
+        assertEquals("topic", profile.relatedIconListUi.singleRecommendEntityType);
+        assertEquals("Lcom/coolapk/market/view/feed/reply/Ԯ;->"
+                        + "ޚ(Lcom/coolapk/market/model/HolderItem;)V",
+                profile.relatedContentUi.descriptor());
+        assertEquals("ENTITY_TYPE_BIND_GOODS", profile.relatedContentUi.entityType);
+    }
+
+    @Test
     public void profileIdentity() {
         TargetProfile profile = profile1662();
         assertEquals(2_609_151L, profile.versionCode);

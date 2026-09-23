@@ -30,6 +30,8 @@ final class HookTopology {
                 return "coolapk-d5-topic-device-recommend";
             case AUTO_COMMENT:
                 return "coolapk-d6-auto-comment";
+            case RELATED_DATA:
+                return RelatedDataDelta.GETTER_HOOK_ID;
             default:
                 return "";
         }
@@ -108,6 +110,7 @@ final class HookTopology {
                 String hookId = businessHookId(feature);
                 int active = ledger != null && !hookId.isEmpty() && ledger.isActive(hookId) ? 1 : 0;
                 sb.append(" hookInstalled=").append(result == InstallResult.INSTALLED
+                        || result == InstallResult.PARTIAL
                         || result == InstallResult.ALREADY_INSTALLED)
                         .append(" activeHookCount=").append(active);
             }

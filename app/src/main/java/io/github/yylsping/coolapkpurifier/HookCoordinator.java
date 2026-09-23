@@ -14,9 +14,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.libxposed.api.XposedInterface.ExceptionMode;
@@ -84,6 +87,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final D3SameTopicReplacement d3SameTopicReplacement;
     private final D5TopicDeviceRecommendDelta d5TopicDeviceRecommendDelta;
     private final D6AutoCommentDelta d6AutoCommentDelta;
+    private final RelatedDataDelta relatedDataDelta;
     private final RecoveryController recoveryController;
     private final FirstAdaptationToast firstAdaptationToast;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -92,6 +96,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final Object stateLock = new Object();
     private final AtomicBoolean sessionRunning = new AtomicBoolean();
     private final AtomicBoolean bootstrapRetired = new AtomicBoolean();
+    private final AtomicBoolean splashDecisionInstallPosted = new AtomicBoolean();
     private final AttachHandoff attachHandoff = new AttachHandoff();
     private final OnceFlag firstActivityPreRecorded = new OnceFlag();
     private final OnceFlag firstActivityPostRecorded = new OnceFlag();
@@ -117,6 +122,14 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private volatile boolean splashFinishedByHook;
     private volatile boolean embeddedSplashHost;
     private volatile boolean terminalCleaned;
+    /**
+     * Hooking a method from the resolver worker while the main thread is in
+     * Activity class initialization can make ART abort inside the native hook
+     * bridge on Android 12. The observer is diagnostic-only, so retain its
+     * verified target and install it from the main queue after bootstrap has
+     * reached a terminal state.
+     */
+    private volatile ResolvedTarget pendingSplashDecisionTarget;
     /** §10A.6: root cause for a dynamic-feature UNAVAILABLE terminal report. */
     private volatile String dynamicFailureReason;
     private int sessionAttempt;
@@ -151,6 +164,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         this.d5TopicDeviceRecommendDelta =
                 new D5TopicDeviceRecommendDelta(module, log, featureGate, exposureLedger);
         this.d6AutoCommentDelta = new D6AutoCommentDelta(
+                module, log, featureGate, exposureLedger);
+        this.relatedDataDelta = new RelatedDataDelta(
                 module, log, featureGate, exposureLedger);
         this.recoveryController = new RecoveryController(log, null, null);
         this.firstAdaptationToast = new FirstAdaptationToast(log);
@@ -414,6 +429,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 profile == null ? null : profile.sameTopic, loader);
         installTopicDeviceFeature(profile, loader);
         installAutoCommentFeature(profile, loader);
+        installRelatedDataFeature(profile, loader);
     }
 
     /**
@@ -473,6 +489,41 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         log.info("feature=" + feature.key + " source=manifest_exact"
                 + " install=" + result
                 + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.ALREADY_INSTALLED));
+    }
+
+    /** RELATED_DATA keeps the model getter observe-only and suppresses exact UI subtypes. */
+    private void installRelatedDataFeature(TargetProfile profile, ClassLoader loader) {
+        PurifierConfig.Feature feature = PurifierConfig.Feature.RELATED_DATA;
+        if (!topology.isEnabledAtStart(feature)) {
+            log.info("feature=" + feature.key + " source=manifest_exact"
+                    + " install=DISABLED hookInstalled=false");
+            return;
+        }
+        InstallResult result = relatedDataDelta.install(
+                profile == null ? null : profile.relatedData,
+                profile == null ? null : profile.relatedIconListUi,
+                profile == null ? null : profile.relatedContentUi,
+                loader);
+        topology.recordInstallResult(feature, result);
+        if (result == InstallResult.INSTALLED || result == InstallResult.PARTIAL) {
+            if (relatedDataDelta.getterInstalled()) {
+                hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                        RelatedDataDelta.GETTER_HOOK_ID, "manifest_exact");
+            }
+            if (relatedDataDelta.iconUiInstalled()) {
+                hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                        RelatedDataDelta.ICON_UI_HOOK_ID, "manifest_exact");
+            }
+            if (relatedDataDelta.contentUiInstalled()) {
+                hookLedger.record(HookLedger.Layer.BUSINESS, feature.key,
+                        RelatedDataDelta.CONTENT_UI_HOOK_ID, "manifest_exact");
+            }
+        }
+        log.info("feature=" + feature.key + " source=manifest_exact"
+                + " install=" + result
+                + " hookInstalled=" + (result == InstallResult.INSTALLED
+                || result == InstallResult.PARTIAL
                 || result == InstallResult.ALREADY_INSTALLED));
     }
 
@@ -567,7 +618,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
             onRuntimeLoaderChanged(activityLoader, "activityLoaderChanged:" + name);
         }
         if (state != BootstrapState.READY && state != BootstrapState.DEGRADED) {
-            triggerSession("activityPre:" + name);
+            requestSessionAfterMainQueue("activityPre:" + name);
         }
         maybeScheduleBootstrapRetire();
     }
@@ -641,7 +692,22 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 + " runtimeLoaderIdentity=" + System.identityHashCode(loader)
                 + " previousLoaderIdentity=" + previous
                 + " generation=" + (dexKitSession == null ? -1 : dexKitSession.getGeneration()));
-        triggerSession("runtimeDex:" + trigger);
+        requestSessionAfterMainQueue("runtimeDex:" + trigger);
+    }
+
+    /**
+     * Runtime-dex readiness is normally reported from a loadClass hook while
+     * Android is still constructing the first Activity. Starting reflection
+     * and native hook installation immediately on the resolver worker races
+     * ART class initialization on Android 12 (and can abort at a checkpoint).
+     * Queueing the handoff behind the current main-loop transaction preserves
+     * the same resolver work while keeping it outside that critical window.
+     */
+    private void requestSessionAfterMainQueue(String trigger) {
+        boolean posted = mainHandler.post(() -> triggerSession(trigger));
+        if (!posted) {
+            log.info("resolver main-queue handoff not posted trigger=" + trigger);
+        }
     }
 
     /**
@@ -1084,7 +1150,8 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
         @Override
         public boolean installFeed(Method method, ResolvedTarget target) {
-            return entityListHooks.install(method) > 0;
+            return installDynamicHookOnMain("feed:" + target.methodDescriptor,
+                    () -> entityListHooks.install(method) > 0);
         }
 
         @Override
@@ -1094,15 +1161,92 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
 
         @Override
         public boolean installSplash(Class<?> type, ResolvedTarget target) {
-            return splashHooks.installSpecific(type);
+            return installDynamicHookOnMain("splash:" + target.classDescriptor,
+                    () -> splashHooks.installSpecific(type));
         }
 
         @Override
         public boolean installSplashDecision(Method method, ResolvedTarget target) {
-            return splashDecisionObserver.install(target,
-                    method.getDeclaringClass().getClassLoader());
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                return splashDecisionObserver.install(target,
+                        method.getDeclaringClass().getClassLoader());
+            }
+            pendingSplashDecisionTarget = target;
+            log.info("splash decision observer deferred"
+                    + " reason=avoidConcurrentClassInitialization"
+                    + " target=" + target.methodDescriptor);
+            return false;
         }
     };
+
+    /**
+     * libxposed's native bridge stops ART threads while patching a method. On
+     * the Android 12 reference device that transition can abort when the call
+     * originates from the resolver worker, even after the first Activity has
+     * completed creation. Resolution remains off-main; only the short native
+     * hook installation is serialized through the main queue.
+     */
+    private boolean installDynamicHookOnMain(String label, Callable<Boolean> action) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            try {
+                return Boolean.TRUE.equals(action.call());
+            } catch (Throwable failure) {
+                log.error("dynamic hook main-thread install failed target=" + label, failure);
+                return false;
+            }
+        }
+        FutureTask<Boolean> task = new FutureTask<>(action);
+        if (!mainHandler.post(task)) {
+            log.info("dynamic hook main-thread install not posted target=" + label);
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(task.get(5L, TimeUnit.SECONDS));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            task.cancel(false);
+            log.info("dynamic hook main-thread install interrupted target=" + label);
+            return false;
+        } catch (Throwable failure) {
+            task.cancel(false);
+            log.error("dynamic hook main-thread install failed target=" + label, failure);
+            return false;
+        }
+    }
+
+    private void schedulePendingSplashDecisionObserver() {
+        ResolvedTarget pending = pendingSplashDecisionTarget;
+        if (pending == null || splashDecisionObserver.isInstalled()
+                || !splashDecisionInstallPosted.compareAndSet(false, true)) {
+            return;
+        }
+        boolean posted = mainHandler.post(() -> {
+            try {
+                ResolvedTarget target = pendingSplashDecisionTarget;
+                if (target == null || splashDecisionObserver.isInstalled()) {
+                    return;
+                }
+                ClassLoader loader = resolveLoader();
+                if (splashDecisionObserver.install(target, loader)) {
+                    pendingSplashDecisionTarget = null;
+                    traceAfterContext("splashDecisionHookInstalled",
+                            "installed=true source=deferred-main mode="
+                                    + SplashDecisionPolicy.MODE);
+                    log.info("installed splash decision observer mode="
+                            + SplashDecisionPolicy.MODE + " source=deferred-main");
+                } else {
+                    log.info("splash decision observer deferred install failed"
+                            + " target=" + target.methodDescriptor);
+                }
+            } finally {
+                splashDecisionInstallPosted.set(false);
+            }
+        });
+        if (!posted) {
+            splashDecisionInstallPosted.set(false);
+            log.info("splash decision observer deferred install not posted");
+        }
+    }
 
     private Map<String, ResolvedTarget> currentTargets() {
         synchronized (resolvedTargets) {
@@ -1288,6 +1432,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         log.info(storage.auditLine());
         log.info("coordinator bootstrap lifecycle retired executorShutdown=true"
                 + " watcherUnhooked=true");
+        schedulePendingSplashDecisionObserver();
     }
 
     /**

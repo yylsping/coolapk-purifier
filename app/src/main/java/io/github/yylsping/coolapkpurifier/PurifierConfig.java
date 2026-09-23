@@ -10,10 +10,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
 
-/** Seven-feature configuration with a framework/module-owned authoritative store. */
+/** Eight-feature configuration with a framework/module-owned authoritative store. */
 final class PurifierConfig {
     static final String FILE_NAME = "coolapk_purifier_config.json";
-    private static final int SCHEMA = 1;
+    private static final int LEGACY_SCHEMA = 1;
+    private static final int SCHEMA = 2;
     private static final int MAX_BYTES = 64 * 1024;
 
     enum Feature {
@@ -22,6 +23,7 @@ final class PurifierConfig {
         REPLY_SPONSOR("remove_reply_sponsor", "去除帖子回复区及评论中的赞助内容", true, false),
         AUTO_COMMENT("remove_auto_comment", "去除自动评论提示", false, true),
         TOPIC_DEVICE_RECOMMEND("remove_topic_device_recommend", "去除话题与机型推荐", false, true),
+        RELATED_DATA("remove_related_data", "去除帖子相关推荐", false, true),
         SAME_TOPIC_FEED("remove_same_topic_feed", "去除同话题动态", false, true),
         DETAIL_SPONSOR("remove_detail_sponsor", "去除帖子内推广", false, true);
 
@@ -72,6 +74,7 @@ final class PurifierConfig {
     private PendingKind pendingKind;
     private long revision;
     private String loadedSource;
+    private boolean rewriteAfterDecode;
 
     static PurifierConfig load(Context context, ConfigStore store, ModuleLog log) {
         File legacyFile = new File(context.getFilesDir(), FILE_NAME);
@@ -163,6 +166,9 @@ final class PurifierConfig {
         byte[] remote = bounded(remoteRaw);
         if (decode(remote)) {
             loadedSource = "remoteAuthoritative";
+            if (rewriteAfterDecode && persist("configSchemaUpgrade1To2")) {
+                loadedSource = "remoteMigratedSchema1To2";
+            }
             info("config loaded source=" + loadedSource + " backend=" + store.backendName()
                     + " revision=" + revision + " pending=" + pendingKind.value);
             return;
@@ -195,6 +201,7 @@ final class PurifierConfig {
         for (Feature feature : Feature.values()) {
             enabled.put(feature, feature.defaultEnabled);
         }
+        rewriteAfterDecode = false;
         pendingKind = PendingKind.DEFAULT;
         revision = 1L;
     }
@@ -205,7 +212,8 @@ final class PurifierConfig {
         }
         try {
             JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-            if (root.optInt("schema", 0) != SCHEMA) {
+            int sourceSchema = root.optInt("schema", 0);
+            if (sourceSchema != LEGACY_SCHEMA && sourceSchema != SCHEMA) {
                 return false;
             }
             JSONObject options = root.optJSONObject("options");
@@ -218,13 +226,21 @@ final class PurifierConfig {
                 if (raw != null && raw != JSONObject.NULL && !(raw instanceof Boolean)) {
                     return false;
                 }
-                decoded.put(feature, raw instanceof Boolean
-                        ? (Boolean) raw : feature.defaultEnabled);
+                // Schema 1 predates the deliberate 2.5 reintroduction. A
+                // stale historical remove_related_data=true must never be
+                // resurrected; the new switch starts false and is honored
+                // only after the snapshot has been rewritten as schema 2.
+                decoded.put(feature,
+                        feature == Feature.RELATED_DATA && sourceSchema == LEGACY_SCHEMA
+                                ? feature.defaultEnabled
+                                : raw instanceof Boolean
+                                        ? (Boolean) raw : feature.defaultEnabled);
             }
             enabled.clear();
             enabled.putAll(decoded);
             pendingKind = PendingKind.from(root.optString("pendingAdaptation", "none"));
             revision = Math.max(1L, root.optLong("revision", 1L));
+            rewriteAfterDecode = sourceSchema == LEGACY_SCHEMA;
             return true;
         } catch (Throwable failure) {
             info("config decode failed error=" + failure);

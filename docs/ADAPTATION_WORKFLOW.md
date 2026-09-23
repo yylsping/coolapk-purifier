@@ -2,14 +2,14 @@
 
 本文档面向维护者，说明当酷安发布新版本时，如何为 `MANIFEST_EXACT` 功能
 （D1 帖子内推广、D2 回复区赞助、D3 同话题动态、D5 话题与机型推荐、
-D6 自动评论提示）生成并验证新的 manifest profile。
+D6 自动评论提示、RELATED_DATA 帖子相关推荐）生成并验证新的 manifest profile。
 
 ## 架构速览
 
 | 功能 | 解析来源 | 未知宿主版本行为 |
 | --- | --- | --- |
 | 开屏（SPLASH）、首页信息流（FEED_SPONSOR） | `DYNAMIC_TRUSTED`（成熟的运行时 resolver + DexKit 缓存） | 照常走自身动态策略 |
-| D1 / D2 / D3 / D5 / D6 | `MANIFEST_EXACT`（`assets/coolapk_target_manifest.json` 中按 versionCode 精确命中的 validated profile） | **fail-closed**：不安装对应 Hook，`InstallResult.UNSUPPORTED_VERSION`，不做 nearest fallback，不做模糊 DexKit 猜测 |
+| D1 / D2 / D3 / D5 / D6 / RELATED_DATA | `MANIFEST_EXACT`（`assets/coolapk_target_manifest.json` 中按 versionCode 精确命中的 validated profile） | **fail-closed**：不安装对应 Hook，`InstallResult.UNSUPPORTED_VERSION`，不做 nearest fallback，不做模糊 DexKit 猜测 |
 
 manifest 解析本身也是 fail-closed 的：schema 不符、JSON 损坏、versionCode
 缺失/重复、target 缺关键字段，都会让整个 manifest（或整个 profile）不可
@@ -85,7 +85,7 @@ manifest 解析本身也是 fail-closed 的：schema 不符、JSON 损坏、vers
 ```
 
 单元测试会直接读取真实打包的 manifest 资产做契约回归；然后按
-`manifest-dynamic-goal-v4.2.md` §20 执行实机回归（冷启动、七功能、
+`manifest-dynamic-goal-v4.2.md` §20 执行实机回归（冷启动、八功能、
 toggle 双向、fail-closed 日志取证）。
 
 ## Dynamic promotion requirements

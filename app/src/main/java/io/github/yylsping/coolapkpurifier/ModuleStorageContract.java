@@ -67,6 +67,7 @@ final class ModuleStorageContract {
             if ("configCreateDefaults".equals(reason)
                     || "configRepairDefaults".equals(reason)
                     || "legacyConfigImport".equals(reason)
+                    || "configSchemaUpgrade1To2".equals(reason)
                     || "configMarkAdapted".equals(reason)) {
                 return true;
             }

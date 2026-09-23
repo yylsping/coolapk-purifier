@@ -6,6 +6,44 @@
       "versionName": "16.6.1",
       "status": "validated",
       "targets": {
+        "relatedData": {
+          "kind": "relatedData",
+          "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
+          "methodName": "getRelatedData",
+          "returnType": "java.util.List"
+        },
+        "relatedIconListUi": {
+          "kind": "relatedIconListUi",
+          "ownerClass": "com.coolapk.market.viewholder.ޕ",
+          "methodName": "ވ",
+          "holderClass": "com.coolapk.market.viewholder.ؠ",
+          "callbackField": "ԯ",
+          "callbackClass": "com.coolapk.market.viewholder.ؠ$Ϳ",
+          "fragmentField": "Ԫ",
+          "fragmentBaseClass": "com.coolapk.market.view.cardlist.EntityListFragment",
+          "hostFragmentClass": "com.coolapk.market.view.feed.reply.FeedDetailFragmentV8",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "cardClass": "com.coolapk.market.model.EntityCard",
+          "cardTemplateGetter": "getEntityTemplate",
+          "cardTemplate": "iconListCard",
+          "entitiesGetter": "getEntities",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTypeGetter": "getEntityType",
+          "promotionEntityType": "goods",
+          "singleRecommendEntityType": "topic"
+        },
+        "relatedContentUi": {
+          "kind": "relatedContentUi",
+          "ownerClass": "com.coolapk.market.view.feed.reply.Ԯ",
+          "methodName": "ޚ",
+          "dataClass": "com.coolapk.market.model.HolderItem",
+          "entityTypeGetter": "getEntityType",
+          "entityType": "ENTITY_TYPE_BIND_GOODS",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewModelClass": "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
         "detailSponsor": {
           "kind": "detailSponsor",
           "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
@@ -99,6 +137,44 @@
       "versionName": "16.6.2",
       "status": "validated",
       "targets": {
+        "relatedData": {
+          "kind": "relatedData",
+          "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
+          "methodName": "getRelatedData",
+          "returnType": "java.util.List"
+        },
+        "relatedIconListUi": {
+          "kind": "relatedIconListUi",
+          "ownerClass": "com.coolapk.market.viewholder.ޕ",
+          "methodName": "ވ",
+          "holderClass": "com.coolapk.market.viewholder.ؠ",
+          "callbackField": "ԯ",
+          "callbackClass": "com.coolapk.market.viewholder.ؠ$Ϳ",
+          "fragmentField": "Ԫ",
+          "fragmentBaseClass": "com.coolapk.market.view.cardlist.EntityListFragment",
+          "hostFragmentClass": "com.coolapk.market.view.feed.reply.FeedDetailFragmentV8",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "cardClass": "com.coolapk.market.model.EntityCard",
+          "cardTemplateGetter": "getEntityTemplate",
+          "cardTemplate": "iconListCard",
+          "entitiesGetter": "getEntities",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTypeGetter": "getEntityType",
+          "promotionEntityType": "goods",
+          "singleRecommendEntityType": "topic"
+        },
+        "relatedContentUi": {
+          "kind": "relatedContentUi",
+          "ownerClass": "com.coolapk.market.view.feed.reply.Ԯ",
+          "methodName": "ޚ",
+          "dataClass": "com.coolapk.market.model.HolderItem",
+          "entityTypeGetter": "getEntityType",
+          "entityType": "ENTITY_TYPE_BIND_GOODS",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewModelClass": "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
         "detailSponsor": {
           "kind": "detailSponsor",
           "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",

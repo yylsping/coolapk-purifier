@@ -47,6 +47,7 @@ public final class PurifierConfigTest {
         assertTrue(config.isEnabled(PurifierConfig.Feature.REPLY_SPONSOR));
         assertFalse(config.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
         assertFalse(config.isEnabled(PurifierConfig.Feature.TOPIC_DEVICE_RECOMMEND));
+        assertFalse(config.isEnabled(PurifierConfig.Feature.RELATED_DATA));
         assertFalse(config.isEnabled(PurifierConfig.Feature.SAME_TOPIC_FEED));
         assertFalse(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
         assertEquals(PurifierConfig.PendingKind.DEFAULT, config.pendingKind());
@@ -149,7 +150,7 @@ public final class PurifierConfigTest {
     }
 
     @Test
-    public void legacyRelatedDataKeyIsIgnoredAndDroppedOnRewrite() {
+    public void schemaOneRelatedDataKeyIsIgnoredAndRewrittenFalse() {
         store.seed(("{\"schema\":1,\"revision\":3,"
                 + "\"pendingAdaptation\":\"none\",\"options\":{"
                 + "\"remove_splash_ads\":false,"
@@ -161,13 +162,30 @@ public final class PurifierConfigTest {
         assertFalse(config.isEnabled(PurifierConfig.Feature.SPLASH));
         assertTrue(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
         assertTrue(config.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
+        assertFalse(config.isEnabled(PurifierConfig.Feature.RELATED_DATA));
+        assertEquals("remoteMigratedSchema1To2", config.loadedSource());
 
-        assertTrue(config.setEnabled(PurifierConfig.Feature.AUTO_COMMENT, true));
         String rewritten = new String(store.read(), StandardCharsets.UTF_8);
-        assertFalse(rewritten.contains("remove_related_data"));
+        assertTrue(rewritten.contains("\"schema\":2"));
+        assertTrue(rewritten.contains("\"remove_related_data\":false"));
         for (PurifierConfig.Feature feature : PurifierConfig.Feature.values()) {
             assertTrue(rewritten.contains(feature.key));
         }
+    }
+
+    @Test
+    public void schemaTwoRelatedDataChoiceIsDurableWithoutChangingOldSeven() {
+        PurifierConfig config = config();
+        assertTrue(config.setEnabled(PurifierConfig.Feature.SPLASH, false));
+        assertTrue(config.setEnabled(PurifierConfig.Feature.DETAIL_SPONSOR, true));
+        assertTrue(config.setEnabled(PurifierConfig.Feature.RELATED_DATA, true));
+
+        PurifierConfig reloaded = config();
+        assertFalse(reloaded.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertTrue(reloaded.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
+        assertTrue(reloaded.isEnabled(PurifierConfig.Feature.RELATED_DATA));
+        assertTrue(reloaded.isEnabled(PurifierConfig.Feature.FEED_SPONSOR));
+        assertFalse(reloaded.isEnabled(PurifierConfig.Feature.AUTO_COMMENT));
     }
 
     @Test
