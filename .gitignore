@@ -37,7 +37,6 @@ history-apks/
 /coolapk--last.zip
 
 # Root Markdown is private by default; README is public.
-# Previously tracked historical release notes remain tracked.
 /*.md
 !/README.md
 
