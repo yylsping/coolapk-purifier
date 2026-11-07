@@ -38,6 +38,47 @@ public final class PurifierConfigTest {
         };
     }
 
+    @Test public void navigationDefaultsPreserveBarAndRoundTripIndependentlyOfAds() {
+        PurifierConfig config = config();
+        assertEquals(0, config.hiddenBottomNavigationItems());
+        assertTrue(config.setBottomNavigationHidden(BottomNavigationSelection.Item.DIGITAL, true));
+        assertTrue(config.setBottomNavigationHidden(BottomNavigationSelection.Item.POST, true));
+        assertTrue(config.setBottomNavigationHidden(BottomNavigationSelection.Item.DISCOVERY, true));
+        PurifierConfig loaded = config();
+        assertEquals(14, loaded.hiddenBottomNavigationItems());
+        assertTrue(loaded.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertFalse(loaded.isEnabled(PurifierConfig.Feature.RELATED_DATA));
+        assertTrue(loaded.hasNonDefaultSelections());
+        assertTrue(loaded.setBottomNavigationHidden(BottomNavigationSelection.Item.POST, false));
+        assertEquals(10, config().hiddenBottomNavigationItems());
+    }
+
+    @Test public void navigationLastPageGuardAndWriteFailureLeaveSnapshotUnchanged() {
+        PurifierConfig config = config();
+        for (BottomNavigationSelection.Item item : new BottomNavigationSelection.Item[]{
+                BottomNavigationSelection.Item.HOME, BottomNavigationSelection.Item.DIGITAL,
+                BottomNavigationSelection.Item.DISCOVERY}) assertTrue(config.setBottomNavigationHidden(item, true));
+        byte[] before = store.read().clone();
+        long revision = config.revision();
+        assertFalse(config.setBottomNavigationHidden(BottomNavigationSelection.Item.MINE, true));
+        assertEquals(revision, config.revision());
+        assertArrayEquals(before, store.read());
+        store.setFailWrites(true);
+        assertFalse(config.setBottomNavigationHidden(BottomNavigationSelection.Item.POST, true));
+        assertEquals(11, config.hiddenBottomNavigationItems());
+        assertEquals(revision, config.revision());
+        assertArrayEquals(before, store.read());
+    }
+
+    @Test public void oldSchemaTwoSelectionsDefaultNavigationToUnchanged() {
+        store.seed("{\"schema\":2,\"options\":{\"remove_splash_ads\":false,\"remove_detail_sponsor\":true}}"
+                .getBytes(StandardCharsets.UTF_8));
+        PurifierConfig config = config();
+        assertEquals(0, config.hiddenBottomNavigationItems());
+        assertFalse(config.isEnabled(PurifierConfig.Feature.SPLASH));
+        assertTrue(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
+    }
+
     @Test
     public void firstLoadPersistsLegacyProtectionsEnabledAndOptionsDisabled() {
         PurifierConfig config = config();

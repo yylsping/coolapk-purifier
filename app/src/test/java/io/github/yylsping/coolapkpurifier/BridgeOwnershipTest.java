@@ -45,9 +45,10 @@ public final class BridgeOwnershipTest {
 
         assertTrue(queryStarted.await(5, TimeUnit.SECONDS));
         ownership.requestClose();
-        closeRequested.countDown();
-        // Give the owner a fair chance to misbehave; the close must stay deferred.
+        // The owner is still blocked inside its transaction here. Releasing
+        // it before this assertion races with its legitimate deferred close.
         assertEquals(0, bridge.closeCount.get());
+        closeRequested.countDown();
         owner.join(5_000);
         assertEquals(1, bridge.closeCount.get());
         assertTrue(ownership.isClosed());

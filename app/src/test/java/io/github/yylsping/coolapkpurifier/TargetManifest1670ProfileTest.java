@@ -15,7 +15,7 @@ public final class TargetManifest1670ProfileTest {
     }
 
     @Test
-    public void exactVersionHasAllFourteenTargetsAndNeighborsStayUnsupported() throws Exception {
+    public void exactVersionHasAllFifteenTargetsAndNeighborsStayUnsupported() throws Exception {
         TargetManifest manifest = TestManifests.manifest();
         TargetProfile p = profile();
         assertEquals("16.7.0", p.versionName);
@@ -27,11 +27,21 @@ public final class TargetManifest1670ProfileTest {
         for (int i = 0; i < profiles.length(); i++) {
             JSONObject candidate = profiles.getJSONObject(i);
             if (candidate.getLong("versionCode") == TestManifests.COOLAPK_16_7_0) {
-                assertEquals(14, candidate.getJSONObject("targets").length());
+                assertEquals(15, candidate.getJSONObject("targets").length());
                 return;
             }
         }
         fail("missing 2610291 profile");
+    }
+
+    @Test public void navigationHasTheExact1670NativeRenderer() {
+        TargetProfile p = profile();
+        assertNotNull(p.bottomNavigation);
+        assertEquals("com.coolapk.market.widget.compose.liquid.\u037f", p.bottomNavigation.rendererOwner);
+        assertEquals("\u0786", p.bottomNavigation.rendererMethod);
+        assertEquals(15, p.bottomNavigation.rendererParams.size());
+        assertEquals("xw8", p.bottomNavigation.rendererParams.get(1));
+        assertEquals("ix8", p.bottomNavigation.rendererParams.get(5));
     }
 
     @Test

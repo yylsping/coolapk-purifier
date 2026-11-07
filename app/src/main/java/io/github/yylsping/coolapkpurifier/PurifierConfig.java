@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
 
-/** Ten-feature configuration with an atomic host-private authoritative store. */
+/** Purifier configuration with an atomic host-private authoritative store. */
 final class PurifierConfig {
     static final String FILE_NAME = "coolapk_purifier_config.json";
     private static final int LEGACY_SCHEMA = 1;
@@ -73,6 +73,7 @@ final class PurifierConfig {
     private final EnumMap<Feature, Boolean> enabled = new EnumMap<>(Feature.class);
     private PendingKind pendingKind;
     private long revision;
+    private int hiddenBottomNavigationItems;
     private String loadedSource;
     private boolean rewriteAfterDecode;
 
@@ -109,6 +110,25 @@ final class PurifierConfig {
         return revision;
     }
 
+    synchronized int hiddenBottomNavigationItems() { return hiddenBottomNavigationItems; }
+
+    synchronized boolean setBottomNavigationHidden(BottomNavigationSelection.Item item, boolean hidden) {
+        int previous = hiddenBottomNavigationItems;
+        int next = hidden ? previous | item.bit() : previous & ~item.bit();
+        if (!BottomNavigationSelection.validMask(next)) return false;
+        if (next == previous) return true;
+        PendingKind previousPending = pendingKind;
+        long previousRevision = revision;
+        hiddenBottomNavigationItems = next;
+        revision++;
+        pendingKind = PendingKind.SELECTION;
+        if (persist("configBottomNavigation:" + item.name())) return true;
+        hiddenBottomNavigationItems = previous;
+        revision = previousRevision;
+        pendingKind = previousPending;
+        return false;
+    }
+
     synchronized String loadedSource() {
         return loadedSource;
     }
@@ -119,6 +139,7 @@ final class PurifierConfig {
     }
 
     synchronized boolean hasNonDefaultSelections() {
+        if (hiddenBottomNavigationItems != 0) return true;
         for (Feature feature : Feature.values()) {
             if (isEnabled(feature) != feature.defaultEnabled) {
                 return true;
@@ -197,6 +218,7 @@ final class PurifierConfig {
     }
 
     private void resetDefaults() {
+        hiddenBottomNavigationItems = 0;
         enabled.clear();
         for (Feature feature : Feature.values()) {
             enabled.put(feature, feature.defaultEnabled);
@@ -221,6 +243,9 @@ final class PurifierConfig {
                 return false;
             }
             EnumMap<Feature, Boolean> decoded = new EnumMap<>(Feature.class);
+            Object navigation = root.opt("hiddenBottomNavigationItems");
+            if (navigation != null && (!(navigation instanceof Integer)
+                    || !BottomNavigationSelection.validMask((Integer) navigation))) return false;
             for (Feature feature : Feature.values()) {
                 Object raw = options.opt(feature.key);
                 if (raw != null && raw != JSONObject.NULL && !(raw instanceof Boolean)) {
@@ -238,6 +263,7 @@ final class PurifierConfig {
             }
             enabled.clear();
             enabled.putAll(decoded);
+            hiddenBottomNavigationItems = navigation == null ? 0 : (Integer) navigation;
             pendingKind = PendingKind.from(root.optString("pendingAdaptation", "none"));
             revision = Math.max(1L, root.optLong("revision", 1L));
             rewriteAfterDecode = sourceSchema == LEGACY_SCHEMA;
@@ -268,6 +294,7 @@ final class PurifierConfig {
             root.put("schema", SCHEMA);
             root.put("revision", revision);
             root.put("pendingAdaptation", pendingKind.value);
+            root.put("hiddenBottomNavigationItems", hiddenBottomNavigationItems);
             JSONObject options = new JSONObject();
             for (Feature feature : Feature.values()) {
                 options.put(feature.key, isEnabled(feature));

@@ -38,6 +38,7 @@ final class SettingsHooks {
     private final Map<ClassLoader, HookHandle> entryHooks = new HashMap<>();
     private final PageInjectionRetry<Activity> injectionRetry;
     private volatile boolean lifecycleCallbacksInstalled;
+    private volatile boolean bottomNavigationSupported;
     private int settingsIcon;
 
     SettingsHooks(XposedModule module, HookLedger ledger, ModuleLog log,
@@ -91,6 +92,8 @@ final class SettingsHooks {
 
     boolean isLifecycleCallbacksInstalled() { return lifecycleCallbacksInstalled; }
 
+    void setBottomNavigationSupported(boolean supported) { bottomNavigationSupported = supported; }
+
     private synchronized boolean ensureNativeEntry(Activity activity) {
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) return true;
         ClassLoader loader = activity.getClass().getClassLoader();
@@ -121,7 +124,7 @@ final class SettingsHooks {
         }
     }
 
-    private void showConfigPage(Activity activity) {
+    void showConfigPage(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed() || pages.contains(activity)) return;
         // A real Dialog owns its back/cancel handling. The native settings
         // Activity, fragment, toolbar and LazyColumn are never replaced/hidden.
@@ -138,7 +141,7 @@ final class SettingsHooks {
         toolbar.setBackgroundColor(resolveColor(activity, android.R.attr.colorBackgroundFloating, Color.WHITE));
         TextView back = new TextView(activity);
         back.setText("‹");
-        back.setContentDescription("返回酷安设置");
+        back.setContentDescription("返回酷安");
         back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
         back.setTextColor(resolveColor(activity, android.R.attr.textColorPrimary, Color.BLACK));
         back.setGravity(Gravity.CENTER);
@@ -169,6 +172,10 @@ final class SettingsHooks {
             params.bottomMargin = dp(activity, 8);
             list.addView(createSwitchRow(activity, feature), params);
         }
+        LinearLayout.LayoutParams navigationParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        navigationParams.bottomMargin = dp(activity, 8);
+        list.addView(createNavigationGroup(activity), navigationParams);
         scroll.addView(list);
         page.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         dialog.setContentView(page);
@@ -189,6 +196,131 @@ final class SettingsHooks {
             dialog.dismiss();
             log.error("settings config page show failed", failure);
         }
+    }
+
+    private View createNavigationGroup(Activity context) {
+        LinearLayout group = new LinearLayout(context);
+        group.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(resolveColor(context, android.R.attr.colorBackgroundFloating, Color.WHITE));
+        background.setCornerRadius(dp(context, 8));
+        group.setBackground(background);
+
+        LinearLayout header = new LinearLayout(context);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setMinimumHeight(dp(context, 68));
+        header.setPadding(dp(context, 18), dp(context, 8), dp(context, 12), dp(context, 8));
+        header.setFocusable(true);
+        LinearLayout labels = new LinearLayout(context);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(context);
+        title.setText("精简底部导航");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        title.setTextColor(resolveColor(context, android.R.attr.textColorPrimary, Color.BLACK));
+        labels.addView(title);
+        TextView summary = new TextView(context);
+        summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        summary.setTextColor(resolveColor(context, android.R.attr.textColorSecondary, 0xff888888));
+        summary.setPadding(0, dp(context, 3), 0, 0);
+        labels.addView(summary);
+        header.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView arrow = new TextView(context);
+        arrow.setText("›");
+        arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        arrow.setTextColor(resolveColor(context, android.R.attr.textColorSecondary, 0xff888888));
+        arrow.setGravity(Gravity.CENTER);
+        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        header.addView(arrow, new LinearLayout.LayoutParams(dp(context, 24), dp(context, 32)));
+        group.addView(header);
+
+        LinearLayout children = new LinearLayout(context);
+        children.setOrientation(LinearLayout.VERTICAL);
+        children.setVisibility(View.GONE);
+        View divider = new View(context);
+        divider.setBackgroundColor(resolveColor(context, android.R.attr.textColorSecondary, 0xff888888));
+        divider.setAlpha(0.15f);
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 1));
+        dividerParams.setMargins(dp(context, 18), 0, dp(context, 12), dp(context, 5));
+        children.addView(divider, dividerParams);
+        Runnable updateSummary = () -> {
+            summary.setText(bottomNavigationSupported
+                    ? navigationSummary() : "当前酷安版本尚未适配底栏精简");
+            header.setContentDescription("精简底部导航，" + summary.getText() + "，"
+                    + (children.getVisibility() == View.VISIBLE ? "已展开" : "已收起"));
+        };
+        for (BottomNavigationSelection.Item item : BottomNavigationSelection.Item.values()) {
+            children.addView(createNavigationSwitchRow(context, item, updateSummary));
+        }
+        TextView note = new TextView(context);
+        note.setText("至少保留一个页面入口，发布不计入页面。\n"
+                + "隐藏首页后从首个保留页面启动；隐藏“我的”后可长按顶部头像进入酷安净化。");
+        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        note.setTextColor(resolveColor(context, android.R.attr.textColorSecondary, 0xff888888));
+        note.setPadding(dp(context, 18), dp(context, 12), dp(context, 12), dp(context, 16));
+        children.addView(note);
+        group.addView(children);
+        header.setOnClickListener(view -> {
+            boolean expanded = children.getVisibility() != View.VISIBLE;
+            children.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            arrow.setRotation(expanded ? 90f : 0f);
+            updateSummary.run();
+        });
+        updateSummary.run();
+        return group;
+    }
+
+    private String navigationSummary() {
+        int mask = config.hiddenBottomNavigationItems();
+        StringBuilder hidden = new StringBuilder();
+        for (BottomNavigationSelection.Item item : BottomNavigationSelection.Item.values()) {
+            if ((mask & item.bit()) == 0) continue;
+            if (hidden.length() > 0) hidden.append('、');
+            hidden.append(item.title);
+        }
+        return hidden.length() == 0 ? "全部入口均显示" : "已隐藏：" + hidden;
+    }
+
+    @SuppressWarnings("deprecation")
+    private View createNavigationSwitchRow(Activity context, BottomNavigationSelection.Item item,
+                                           Runnable onSelectionChanged) {
+        boolean supported = bottomNavigationSupported;
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(context, 55));
+        row.setPadding(dp(context, 18), dp(context, 8), dp(context, 12), dp(context, 8));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(resolveColor(context, android.R.attr.colorBackgroundFloating, Color.WHITE));
+        background.setCornerRadius(dp(context, 8));
+        row.setBackground(background);
+        TextView title = new TextView(context);
+        title.setText("隐藏底栏“" + item.title + "”");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        title.setTextColor(resolveColor(context, android.R.attr.textColorPrimary, Color.BLACK));
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Switch toggle = new Switch(context);
+        toggle.setContentDescription(title.getText());
+        toggle.setChecked((config.hiddenBottomNavigationItems() & item.bit()) != 0);
+        toggle.setEnabled(supported);
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (Boolean.TRUE.equals(button.getTag())) return;
+            int mask = config.hiddenBottomNavigationItems();
+            int next = checked ? mask | item.bit() : mask & ~item.bit();
+            if (!config.setBottomNavigationHidden(item, checked)) {
+                Toast.makeText(context.getApplicationContext(), BottomNavigationSelection.validMask(next)
+                        ? "配置保存失败" : "请至少保留一个页面入口", Toast.LENGTH_SHORT).show();
+                button.setTag(Boolean.TRUE);
+                button.setChecked((config.hiddenBottomNavigationItems() & item.bit()) != 0);
+                button.setTag(null);
+            }
+            onSelectionChanged.run();
+        });
+        row.addView(toggle);
+        row.setAlpha(supported ? 1f : 0.45f);
+        row.setEnabled(supported);
+        row.setOnClickListener(view -> { if (toggle.isEnabled()) toggle.setChecked(!toggle.isChecked()); });
+        return row;
     }
 
     @SuppressWarnings("deprecation")

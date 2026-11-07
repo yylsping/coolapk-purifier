@@ -8,6 +8,8 @@
 - 模块 APK 不声明 Activity、Provider、Service 或 Receiver，不启动模块进程。
 - 用户从酷安原生设置最上方进入配置页。`SettingsHooks` 在宿主进程内创建
   Activity 所属的 Dialog，不替换原生设置 Activity、Fragment 或列表。
+- 16.7.0 隐藏“我的”入口时，顶部头像增加长按打开同一配置页的备用入口，
+  原有单击行为保留。该 Dialog 仍由宿主 Activity 持有并随其销毁释放。
 - 返回时关闭 Dialog 并保留原生设置；Activity 销毁时关闭所属页面；重复进入
   不叠加页面或入口。无需跨应用启动权限、自启动或后台白名单。
 - 配置页背景覆盖整个窗口，系统栏与刘海边距施加于页面内部，导航栏区域不得

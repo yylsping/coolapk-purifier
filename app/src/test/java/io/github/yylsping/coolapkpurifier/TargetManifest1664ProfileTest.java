@@ -49,7 +49,7 @@ public final class TargetManifest1664ProfileTest {
             throw new AssertionError("manifest must carry a 2609291 profile");
         }
         assertEquals("validated", profile1664.getString("status"));
-        assertEquals(14, profile1664.getJSONObject("targets").length());
+        assertEquals(15, profile1664.getJSONObject("targets").length());
     }
 
     @Test

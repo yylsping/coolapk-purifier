@@ -42,6 +42,9 @@ final class ModuleStorageContract {
                     return true;
                 }
             }
+            for (BottomNavigationSelection.Item item : BottomNavigationSelection.Item.values()) {
+                if (("configBottomNavigation:" + item.name()).equals(reason)) return true;
+            }
             return false;
         }
         if (CACHE_KEY.equals(key)) {

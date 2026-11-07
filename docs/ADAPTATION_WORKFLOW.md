@@ -50,6 +50,13 @@ manifest 不可用，而不是静默降级为部分可用。`status=draft` 的 p
 observe-only 层对应的 UI terminal。16.7.0 的静态与实机验证概况见
 [适配说明](ADAPTATION_16_7_0.md)。
 
+2.8.0 为上述五个支持版本分别增加了可选 `bottomNavigation` 目标，各 profile
+因此为 15 个目标。导航未纳入 generator，需独立核验原生玻璃布局、重组、
+点击和入口恢复；不能只复制到其他版本或放宽 versionCode。16.6.1 使用九参
+展示入口和独立的玻璃 panel 契约，16.6.2 及以后使用十五参展示入口。
+初始原理见[底栏研究记录](ISSUE_26_BOTTOM_NAVIGATION_16_7_0.md)，跨版本差异
+与回归范围见 [2.8.0 适配记录](ADAPTATION_2_8_0.md)。
+
 默认 baseline 是 manifest 中第一个 validated profile。需要与最新已适配
 版本比较时，应先导出该版本为独立 manifest，再显式传入 `--baseline`；
 `diff --old` 同样使用该独立 manifest，避免实际比较的是更早版本。
@@ -110,8 +117,10 @@ observe-only 层对应的 UI terminal。16.7.0 的静态与实机验证概况见
 ```
 
 单元测试会直接读取真实打包的 manifest 资产做契约回归；然后按
-`manifest-dynamic-goal-v4.2.md` §20 执行实机回归（冷启动、全部 10 项
-功能、toggle 双向、fail-closed 日志取证）。
+`manifest-dynamic-goal-v4.2.md` §20 执行既有十项净化功能的实机回归
+（冷启动、toggle 双向、fail-closed 日志取证）。第 11 项“精简底部导航”
+另需覆盖五个子选项的全部合法组合、末页保护、点击映射、设置持久化及
+原生玻璃表现，具体矩阵见 [2.8.0 适配记录](ADAPTATION_2_8_0.md)。
 
 ## Dynamic promotion requirements
 

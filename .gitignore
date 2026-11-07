@@ -26,6 +26,10 @@ keystore.properties
 *.apk
 *.aab
 *.jadx
+*.dex
+*.odex
+*.vdex
+*.oat
 *-source.zip
 dist/
 reference/decompiled/

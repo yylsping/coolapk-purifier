@@ -18,6 +18,20 @@ public final class HostPrivateBlobStoreTest {
         return store;
     }
 
+    @Test public void navigationSelectionUsesAllowedAtomicHostStorageAndSurvivesReload() {
+        HostPrivateBlobStore store = store(folder.getRoot());
+        PurifierConfig config = new PurifierConfig(store, null, null);
+        assertTrue(config.setBottomNavigationHidden(BottomNavigationSelection.Item.POST, true));
+        assertTrue(config.setBottomNavigationHidden(BottomNavigationSelection.Item.DIGITAL, true));
+        PurifierConfig loaded = new PurifierConfig(store(folder.getRoot()), null, null);
+        assertEquals(6, loaded.hiddenBottomNavigationItems());
+        assertEquals(3, store.persistentWriteCount());
+        assertFalse(store.write(store.read(), "configBottomNavigation:UNKNOWN"));
+        assertFalse(ModuleStorageContract.isValidWriteReason(ModuleStorageContract.CACHE_KEY,
+                "configBottomNavigation:POST"));
+        assertEquals(1, folder.getRoot().list().length);
+    }
+
     @Test public void frameworkSelectionMigratesOnceAndHostFileWinsOnNextLoad() {
         ModuleStorage.MemoryBlobStore old = new ModuleStorage.MemoryBlobStore(
                 "oldFramework", new HostDataMutationGuard());

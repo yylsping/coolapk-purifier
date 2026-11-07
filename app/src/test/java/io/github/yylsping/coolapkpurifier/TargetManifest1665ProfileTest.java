@@ -27,7 +27,7 @@ public final class TargetManifest1665ProfileTest {
         for (int i = 0; i < profiles.length(); i++) {
             JSONObject candidate = profiles.getJSONObject(i);
             if (candidate.getLong("versionCode") == TestManifests.COOLAPK_16_6_5) {
-                assertEquals(14, candidate.getJSONObject("targets").length());
+                assertEquals(15, candidate.getJSONObject("targets").length());
                 return;
             }
         }

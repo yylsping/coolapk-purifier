@@ -258,6 +258,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final Object configLock = new Object();
     private volatile PurifierConfig config;
     private volatile SettingsHooks settingsHooks;
+    private final BottomNavigationHooks bottomNavigationHooks = new BottomNavigationHooks();
     private volatile int coolapkMajor;
     private volatile long hostVersionCodeAtAttach;
 
@@ -354,8 +355,13 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 + " profile=" + (repository == null ? "missing"
                 : repository.profileStatus(hostVersion)));
         topology = new HookTopology(effectiveSnapshot(), profile != null);
+        settingsHooks.setBottomNavigationSupported(profile != null && profile.bottomNavigation != null);
 
         installManifestFeatures(profile, context.getClassLoader());
+        InstallResult navigationResult = bottomNavigationHooks.install(module, log, hookLedger,
+                profile == null ? null : profile.bottomNavigation, context.getClassLoader(),
+                config.hiddenBottomNavigationItems(), settingsHooks::showConfigPage);
+        log.info("bottomNavigation install=" + navigationResult + " versionCode=" + hostVersion);
 
         // The embedded UI cleaner depends only on the exact fragment class,
         // never on the resolver pipeline or the decision observer.
