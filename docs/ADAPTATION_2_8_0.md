@@ -171,3 +171,37 @@ Debug / Compatible 的 415 项结果属于前述跨版本阶段，本轮未重�
 手机最终为 16.7.0、浅色、仅保留“首页 / 我的”，原有十项选择已恢复，设置页
 停留在展开状态供人工查看。未清除数据、未重启手机或 LSPosed、未更改模块启用
 与作用域，也未执行任何远程写入。
+
+## 正式发布产物核验（2026-11-07）
+
+用户人工核验后授权双端发布，并修改了最终阅读物；README 与 2.8.0 notes
+按其最后内容冻结，后续不再编辑。冻结 SHA-256 分别为
+`35806c95030cb4a8fd726397f5991d84c5c86501c42bc7abf6f3be42e8140d6b`、
+`e6e0898c120c00dd00354eea7af0e88068e7030e76cf309032ae73fd730720fd`。
+
+构建源码提交为 `bf23d01cbd00590566940532b2d54153611e9868`。复用前述已验收
+包的编译结果，未 clean，仅增量打包使 APK 内 VCS revision 与该提交一致。
+ZIP 条目逐项比较确认，仅 `META-INF/version-control-info.textproto` 改变；
+DEX、资源、manifest 等其余条目完全一致，R8 mapping 也逐字节未变。
+随后源码提交只补本文档的产物记录，不改变生产构建输入。
+
+| 项目 | 正式发布使用的文件 |
+| --- | --- |
+| APK | `dist/coolapk-purifier-v2.8.0.apk`，1,237,174 字节 |
+| APK SHA-256 | `e57e3267679daa3bf36df6eaa66f9fbc7a59123fe902f78444bd5d3d367d01c9` |
+| Mapping SHA-256 | `553b3ddc13429d5299c6119291af7f9677b8a7f7c3dbc07a085ce5f4cbfcbec8` |
+| 包属性 | Release / 2.8.0 / versionCode 20 / minSdk 28 / targetSdk 35 / 非 debuggable |
+
+APK v2 签名通过，证书摘要与前述历史正式版相同，并只读核对了本地密钥库的
+`PrivateKeyEntry` 及导出证书，确认使用正式私钥签名。最终包的架构 gate 通过。
+发布核验没有重复执行已通过的业务矩阵。
+
+实际工作树及暂存清单均已检查，私钥、环境配置、DEX、历史 APK、逆向资产、
+`local-archive`、过程目录和内部提示词均被忽略，没有进入待发布源码。
+同时补充了 `.dex / .odex / .vdex / .oat` 的散落文件忽略规则。
+五个精确支持版本共 49 份业务 DEX 已有持久化路径及摘要索引，仅存本地归档，
+不作为源码或 Release 附件；16.6.5 和 16.7.0 直接复用既有归档。
+
+发布过程与下载核验记录存于本地 `processing-release-2.8.0/`，双端最终公开状态
+及标签解析结果在本地 `XPOSED_UPDATE.md` 记录；Release 只附同名正式 APK，
+正文使用冻结的 2.8.0 notes。
