@@ -16,9 +16,24 @@ final class BottomNavigationTargetSpec {
     final List<String> rendererParams;
     final String panelRendererMethod;
     final List<String> panelRendererParams;
+    final boolean genericGlass;
+    final String glassRendererOwner, slotsOwner;
+    final List<String> glassRendererParams, slotsParams;
 
     private BottomNavigationTargetSpec(JSONObject json) throws TargetManifest.ManifestException {
         rendererOwner = required(json, "rendererOwner");
+        String contract = json.optString("contract", "liquid");
+        if (!"liquid".equals(contract) && !"genericGlass".equals(contract)) {
+            throw new TargetManifest.ManifestException("unknown bottomNavigation contract=" + contract);
+        }
+        genericGlass = "genericGlass".equals(contract);
+        glassRendererOwner = genericGlass ? required(json, "glassRendererOwner") : rendererOwner;
+        slotsOwner = genericGlass ? required(json, "slotsOwner") : rendererOwner;
+        glassRendererParams = genericGlass
+                ? SpecJson.requiredArray(json, "glassRendererParams", "bottomNavigation")
+                : java.util.Collections.emptyList();
+        slotsParams = genericGlass ? SpecJson.requiredArray(json, "slotsParams", "bottomNavigation")
+                : java.util.Collections.emptyList();
         rendererMethod = required(json, "rendererMethod");
         configClass = required(json, "configClass");
         itemClass = required(json, "itemClass");

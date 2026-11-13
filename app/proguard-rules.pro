@@ -22,4 +22,6 @@
 # to the module's renamed class, which the host loader cannot load.
 -keep interface kotlin.jvm.functions.Function1 { *; }
 -keep interface kotlin.jvm.functions.Function0 { *; }
+-keep interface kotlin.jvm.functions.Function5 { *; }
+-keep interface kotlin.jvm.functions.Function6 { *; }
 -keep class kotlin.Unit { *; }

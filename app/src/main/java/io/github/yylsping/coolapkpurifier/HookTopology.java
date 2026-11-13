@@ -48,6 +48,9 @@ final class HookTopology {
      * install never reports hookInstalled=true with activeHookCount=0.
      */
     static String[] businessHookIds(PurifierConfig.Feature feature) {
+        if (feature == PurifierConfig.Feature.BLOCK_SELF_UPDATE) {
+            return HostUpgradeHooks.HOOK_IDS.clone();
+        }
         if (feature == PurifierConfig.Feature.SEARCH_HOT_WORDS) {
             return new String[]{
                     SearchHotWordsDelta.CAPSULE_UI_HOOK_ID,

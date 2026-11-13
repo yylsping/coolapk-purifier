@@ -46,6 +46,7 @@ final class TargetProfile {
     final SearchUiCardTargetSpec searchHotWordsUi;
     final SearchUiCardTargetSpec searchHotRankingsUi;
     final BottomNavigationTargetSpec bottomNavigation;
+    final HostUpgradeTargetSpec hostUpgrade;
 
     private TargetProfile(long versionCode, String versionName, Status status,
                           DetailSponsorTargetSpec detailSponsor,
@@ -62,7 +63,8 @@ final class TargetProfile {
                           SearchUiCardTargetSpec searchHotCapsuleUi,
                           SearchUiCardTargetSpec searchHotWordsUi,
                           SearchUiCardTargetSpec searchHotRankingsUi,
-                          BottomNavigationTargetSpec bottomNavigation) {
+                          BottomNavigationTargetSpec bottomNavigation,
+                          HostUpgradeTargetSpec hostUpgrade) {
         this.versionCode = versionCode;
         this.versionName = versionName;
         this.status = status;
@@ -81,6 +83,7 @@ final class TargetProfile {
         this.searchHotWordsUi = searchHotWordsUi;
         this.searchHotRankingsUi = searchHotRankingsUi;
         this.bottomNavigation = bottomNavigation;
+        this.hostUpgrade = hostUpgrade;
     }
 
     static TargetProfile parse(JSONObject json) throws TargetManifest.ManifestException {
@@ -105,7 +108,8 @@ final class TargetProfile {
                 "topicDeviceRecommend", "topicDeviceRecommendUi",
                 "autoComment", "autoCommentPrompt", "relatedData",
                 "relatedIconListUi", "relatedContentUi",
-                "searchHotCapsuleUi", "searchHotWordsUi", "searchHotRankingsUi", "bottomNavigation"));
+                "searchHotCapsuleUi", "searchHotWordsUi", "searchHotRankingsUi", "bottomNavigation",
+                "hostUpgrade"));
         for (java.util.Iterator<String> keys = targets.keys(); keys.hasNext(); ) {
             String key = keys.next();
             if (!known.contains(key)) {
@@ -131,7 +135,8 @@ final class TargetProfile {
                         targets.optJSONObject("searchHotWordsUi"), "searchHotWordsUi"),
                 SearchUiCardTargetSpec.parse(
                         targets.optJSONObject("searchHotRankingsUi"), "searchHotRankingsUi"),
-                BottomNavigationTargetSpec.parse(targets.optJSONObject("bottomNavigation")));
+                BottomNavigationTargetSpec.parse(targets.optJSONObject("bottomNavigation")),
+                HostUpgradeTargetSpec.parse(targets.optJSONObject("hostUpgrade")));
         if (status == Status.VALIDATED) {
             // A validated profile is a production contract: every
             // manifest-managed target must exist and be fully typed. Missing

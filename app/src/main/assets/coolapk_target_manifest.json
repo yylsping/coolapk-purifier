@@ -230,6 +230,16 @@
           "instanceField": "Ϳ",
           "headerClass": "com.coolapk.market.widget.SearchAppHeader",
           "avatarContainerField": "ޒ"
+        },
+        "hostUpgrade": {
+          "checkOwner": "qu1",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ৼ",
+          "checkMethod": "ࡻ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޔ",
+          "popupMethod": "މ",
+          "manualCheckMethod": "ࢷ"
         }
       }
     },
@@ -452,6 +462,16 @@
           "instanceField": "Ϳ",
           "headerClass": "com.coolapk.market.widget.SearchAppHeader",
           "avatarContainerField": "ޒ"
+        },
+        "hostUpgrade": {
+          "checkOwner": "t32",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ৼ",
+          "checkMethod": "ࡻ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޔ",
+          "popupMethod": "މ",
+          "manualCheckMethod": "ৼ"
         }
 
       }
@@ -675,6 +695,16 @@
           "instanceField": "Ϳ",
           "headerClass": "com.coolapk.market.widget.SearchAppHeader",
           "avatarContainerField": "ޒ"
+        },
+        "hostUpgrade": {
+          "checkOwner": "q32",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ৼ",
+          "checkMethod": "ࡻ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޕ",
+          "popupMethod": "މ",
+          "manualCheckMethod": "ৼ"
         }
       }
     },
@@ -898,6 +928,16 @@
           "instanceField": "Ϳ",
           "headerClass": "com.coolapk.market.widget.SearchAppHeader",
           "avatarContainerField": "ޒ"
+        },
+        "hostUpgrade": {
+          "checkOwner": "x62",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ৼ",
+          "checkMethod": "ࡼ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޕ",
+          "popupMethod": "މ",
+          "manualCheckMethod": "ྈ"
         }
       }
     },
@@ -1121,6 +1161,289 @@
           "instanceField": "Ϳ",
           "headerClass": "com.coolapk.market.widget.SearchAppHeader",
           "avatarContainerField": "ޒ"
+        },
+        "hostUpgrade": {
+          "checkOwner": "y72",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ৼ",
+          "checkMethod": "ࡼ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޚ",
+          "popupMethod": "މ",
+          "manualCheckMethod": "ྈ"
+        }
+      }
+    },
+    {
+      "versionCode": 2611121,
+      "versionName": "16.7.3",
+      "status": "validated",
+      "targets": {
+        "relatedData": {
+          "kind": "relatedData",
+          "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
+          "methodName": "getRelatedData",
+          "returnType": "java.util.List"
+        },
+        "relatedIconListUi": {
+          "kind": "relatedIconListUi",
+          "ownerClass": "com.coolapk.market.viewholder.ޔ",
+          "methodName": "ޅ",
+          "holderClass": "com.coolapk.market.viewholder.ؠ",
+          "callbackField": "ԯ",
+          "callbackClass": "com.coolapk.market.viewholder.ؠ$Ϳ",
+          "fragmentField": "Ԫ",
+          "fragmentBaseClass": "com.coolapk.market.view.cardlist.EntityListFragment",
+          "hostFragmentClass": "com.coolapk.market.view.feed.reply.FeedDetailFragmentV8",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "cardClass": "com.coolapk.market.model.EntityCard",
+          "cardTemplateGetter": "getEntityTemplate",
+          "cardTemplate": "iconListCard",
+          "entitiesGetter": "getEntities",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTypeGetter": "getEntityType",
+          "promotionEntityType": "goods",
+          "singleRecommendEntityType": "topic"
+        },
+        "relatedContentUi": {
+          "kind": "relatedContentUi",
+          "ownerClass": "com.coolapk.market.view.feed.reply.Ԯ",
+          "methodName": "ޓ",
+          "dataClass": "com.coolapk.market.model.HolderItem",
+          "entityTypeGetter": "getEntityType",
+          "entityType": "ENTITY_TYPE_BIND_GOODS",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewModelClass": "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
+        "detailSponsor": {
+          "kind": "detailSponsor",
+          "methodName": "getDetailSponsorCard",
+          "ownerClass": "com.coolapk.market.model.$$AutoValue_Feed",
+          "returnType": "com.coolapk.market.model.Entity"
+        },
+        "detailSponsorUi": {
+          "kind": "detailSponsorUi",
+          "ownerClass": "com.coolapk.market.view.ad.ֈ",
+          "methodName": "ޅ",
+          "layoutField": "ކ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "sponsorForFeedDetail",
+          "adHelperClass": "com.coolapk.market.view.ad.EntityAdHelper",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
+        "replySponsor": {
+          "kind": "replySponsor",
+          "ownerClass": "l65",
+          "methodName": "ޅ",
+          "layoutField": "މ",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "feedDetailReplySponsorCard",
+          "adHelperClass": "com.coolapk.market.view.ad.EntityAdHelper",
+          "bindingComponentClass": "androidx.databinding.DataBindingComponent",
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+        },
+        "sameTopic": {
+          "eventClass": "t97",
+          "entityClass": "com.coolapk.market.model.Entity",
+          "entityTemplate": "feedRecommendListCard",
+          "kind": "sameTopic",
+          "semanticMethod": "Ȝ",
+          "entityTemplateGetter": "getEntityTemplate",
+          "ownerClass": "com.coolapk.market.view.cardlist.MainV8ListFragment",
+          "cardGetter": "Ԩ",
+          "ownerParentClass": "com.coolapk.market.view.cardlist.EntityListFragment",
+          "eventHandler": "onInsertRecommendListEvent",
+          "anchorGetter": "Ϳ"
+        },
+        "topicDeviceRecommend": {
+          "parameterTypes": [
+            "com.coolapk.market.model.Feed",
+            "qk4",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ],
+          "kind": "staticAssembler",
+          "methodName": "ގ",
+          "ownerClass": "qk4",
+          "returnType": "kotlin.Unit"
+        },
+        "autoComment": {
+          "parameterTypes": [
+            "com.coolapk.market.view.cardlist.EntityListFragment"
+          ],
+          "kind": "staticAssembler",
+          "methodName": "Ϳ",
+          "ownerClass": "com.coolapk.market.view.cardlist.component.RecyclerViewItemFullVisibleControllerKt",
+          "returnType": "void"
+        },
+        "autoCommentPrompt": {
+          "kind": "staticAssembler",
+          "ownerClass": "com.coolapk.market.view.cardlist.component.RecyclerViewItemFullVisibleControllerKt$addAutoShowFeedCommentView$1",
+          "methodName": "Ԫ",
+          "parameterTypes": [
+            "com.coolapk.market.view.cardlist.EntityListFragment",
+            "kotlin.ranges.IntRange"
+          ],
+          "returnType": "kotlin.Unit"
+        },
+        "topicDeviceRecommendUi": {
+          "kind": "staticAssembler",
+          "ownerClass": "x05",
+          "methodName": "ԭ",
+          "parameterTypes": [
+            "androidx.compose.ui.Modifier",
+            "com.coolapk.market.model.FeedTarget",
+            "com.coolapk.market.view.feed.reply.FeedDetailV13ViewModel",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ],
+          "returnType": "void"
+        },
+        "searchHotCapsuleUi": {
+          "kind": "searchHotCapsuleUi",
+          "ownerClass": "lw",
+          "methodName": "ޅ",
+          "dataClass": "java.lang.Object",
+          "cardClass": "com.coolapk.market.model.Card",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "capsuleListCard",
+          "urlGetter": "getUrl",
+          "urlContains": "contentEntityType=hotSearch",
+          "constructorParams": [
+            "android.view.View",
+            "androidx.databinding.DataBindingComponent"
+          ],
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "layoutName": "item_capsule_list"
+        },
+        "searchHotWordsUi": {
+          "kind": "searchHotWordsUi",
+          "ownerClass": "y7f",
+          "methodName": "ޅ",
+          "dataClass": "java.lang.Object",
+          "cardClass": "com.coolapk.market.model.Card",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "hotSearch",
+          "urlGetter": "getUrl",
+          "urlContains": "",
+          "constructorParams": [
+            "android.view.View",
+            "androidx.databinding.DataBindingComponent",
+            "be7"
+          ],
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "layoutName": "search_hot"
+        },
+        "searchHotRankingsUi": {
+          "kind": "searchHotRankingsUi",
+          "ownerClass": "x7f",
+          "methodName": "ޅ",
+          "dataClass": "java.lang.Object",
+          "cardClass": "com.coolapk.market.model.Card",
+          "entityTemplateGetter": "getEntityTemplate",
+          "entityTemplate": "searchHotListCard",
+          "urlGetter": "getUrl",
+          "urlContains": "",
+          "constructorParams": [
+            "android.view.View",
+            "androidx.databinding.DataBindingComponent",
+            "be7",
+            "h34"
+          ],
+          "viewHolderClass": "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+          "layoutName": "search_hot_list_card"
+        },
+        "bottomNavigation": {
+          "rendererOwner": "com.coolapk.market.widget.compose.liquid.Ϳ",
+          "rendererMethod": "Ԭ",
+          "glassRendererMethod": "ֈ",
+          "layoutOwner": "com.coolapk.market.widget.compose.liquid.LiquidGlassTabPanelKt",
+          "layoutMethod": "ࢳ",
+          "slotsMethod": "ԩ",
+          "refreshDataMethod": "Ԯ",
+          "rendererParams": [
+            "java.util.List",
+            "w09",
+            "int",
+            "kotlin.jvm.functions.Function1",
+            "androidx.compose.ui.Modifier",
+            "h19",
+            "w59",
+            "r59",
+            "v59",
+            "com.coolapk.market.widget.compose.liquid.Ԭ",
+            "x09",
+            "androidx.compose.runtime.Composer",
+            "int",
+            "int",
+            "int"
+          ],
+          "configClass": "w09",
+          "itemClass": "el",
+          "postSlotClass": "h19",
+          "viewModelClass": "com.coolapk.market.view.main.navigation.MainViewModel",
+          "currentItemGetter": "ԫ",
+          "dataListGetter": "Ԫ",
+          "helperClass": "com.coolapk.market.view.main.navigation.Ϳ",
+          "listGetter": "ՠ",
+          "instanceField": "Ϳ",
+          "headerClass": "com.coolapk.market.widget.SearchAppHeader",
+          "avatarContainerField": "ޒ",
+          "contract": "genericGlass",
+          "glassRendererOwner": "vt1",
+          "slotsOwner": "vt1",
+          "glassRendererParams": [
+            "int",
+            "java.util.List",
+            "int",
+            "kotlin.jvm.functions.Function1",
+            "androidx.compose.ui.Modifier",
+            "java.lang.Integer",
+            "w59",
+            "r59",
+            "long",
+            "long",
+            "v59",
+            "com.coolapk.market.widget.compose.liquid.Ԭ",
+            "kotlin.jvm.functions.Function5",
+            "kotlin.jvm.functions.Function6",
+            "androidx.compose.runtime.Composer",
+            "int",
+            "int",
+            "int"
+          ],
+          "slotsParams": [
+            "int",
+            "java.util.List",
+            "int",
+            "java.lang.Integer",
+            "kotlin.jvm.functions.Function5",
+            "kotlin.jvm.functions.Function6",
+            "long",
+            "long",
+            "androidx.compose.foundation.layout.BoxScope",
+            "z59",
+            "kotlin.jvm.functions.Function1",
+            "com.coolapk.market.widget.compose.liquid.LiquidGlassTabContentLayer",
+            "kotlin.jvm.functions.Function0",
+            "androidx.compose.runtime.Composer",
+            "int"
+          ]
+        },
+        "hostUpgrade": {
+          "checkOwner": "kc2",
+          "kind": "hostUpgrade",
+          "downloadMethod": "ಀ",
+          "checkMethod": "ࡾ",
+          "observableClass": "rx.Ԫ",
+          "justMethod": "ޚ",
+          "popupMethod": "ލ",
+          "manualCheckMethod": "ྈ"
         }
       }
     }

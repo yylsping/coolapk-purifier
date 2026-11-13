@@ -94,6 +94,10 @@ final class SettingsHooks {
 
     void setBottomNavigationSupported(boolean supported) { bottomNavigationSupported = supported; }
 
+    private volatile boolean hostUpgradeSupported;
+
+    void setHostUpgradeSupported(boolean supported) { hostUpgradeSupported = supported; }
+
     private synchronized boolean ensureNativeEntry(Activity activity) {
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) return true;
         ClassLoader loader = activity.getClass().getClassLoader();
@@ -344,10 +348,19 @@ final class SettingsHooks {
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         title.setTextColor(resolveColor(context, android.R.attr.textColorPrimary, Color.BLACK));
         labels.addView(title);
-        boolean supported = !feature.requiresCoolapk15 || coolapkMajor >= 15;
+        boolean supported = (!feature.requiresCoolapk15 || coolapkMajor >= 15)
+                && (feature != PurifierConfig.Feature.BLOCK_SELF_UPDATE || hostUpgradeSupported);
         if (!supported) {
             TextView summary = new TextView(context);
-            summary.setText("仅支持酷安 15.x 及以上");
+            summary.setText(feature == PurifierConfig.Feature.BLOCK_SELF_UPDATE
+                    ? "当前酷安版本暂未适配" : "仅支持酷安 15.x 及以上");
+            summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            summary.setTextColor(resolveColor(context,
+                    android.R.attr.textColorSecondary, 0xff888888));
+            labels.addView(summary);
+        } else if (feature == PurifierConfig.Feature.BLOCK_SELF_UPDATE) {
+            TextView summary = new TextView(context);
+            summary.setText("阻止酷安自身的更新检查、弹窗和升级下载");
             summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             summary.setTextColor(resolveColor(context,
                     android.R.attr.textColorSecondary, 0xff888888));

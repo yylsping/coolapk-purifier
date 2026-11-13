@@ -15,7 +15,7 @@ public final class TargetManifest1670ProfileTest {
     }
 
     @Test
-    public void exactVersionHasAllFifteenTargetsAndNeighborsStayUnsupported() throws Exception {
+    public void exactVersionHasAllTargetsAndNeighborsStayUnsupported() throws Exception {
         TargetManifest manifest = TestManifests.manifest();
         TargetProfile p = profile();
         assertEquals("16.7.0", p.versionName);
@@ -27,7 +27,7 @@ public final class TargetManifest1670ProfileTest {
         for (int i = 0; i < profiles.length(); i++) {
             JSONObject candidate = profiles.getJSONObject(i);
             if (candidate.getLong("versionCode") == TestManifests.COOLAPK_16_7_0) {
-                assertEquals(15, candidate.getJSONObject("targets").length());
+                assertEquals(16, candidate.getJSONObject("targets").length());
                 return;
             }
         }

@@ -78,6 +78,7 @@ final class BottomNavigationHooks {
                     .setId(RENDER_HOOK_ID).intercept(chain -> onRender(chain, selection, target, log)));
             handles.add(module.hook(target.glassRenderer).setExceptionMode(ExceptionMode.PROTECTIVE)
                     .setId(SELECTION_HOOK_ID).intercept(chain -> {
+                        if (target.genericGlass) return onGenericGlass(chain, target);
                         if (target.legacy) return onLegacyGlass(chain);
                         if (!installed || (hiddenSelection.get() == null && !(chain.getArg(2) instanceof MainSlots))) return chain.proceed();
                         Object[] args = new Object[16];
@@ -105,6 +106,20 @@ final class BottomNavigationHooks {
                     }));
             handles.add(module.hook(target.slotsRenderer).setExceptionMode(ExceptionMode.PROTECTIVE)
                     .setId(CONTENT_HOOK_ID).intercept(chain -> {
+                        if (target.genericGlass) {
+                            if (!installed || !(chain.getArg(1) instanceof MainSlots)) return chain.proceed();
+                            Object[] args = new Object[15];
+                            for (int i = 0; i < args.length; i++) args[i] = chain.getArg(i);
+                            if (((MainSlots) args[1]).selectionHidden) {
+                                args[2] = -1;
+                                // The shared renderer captures accent/default content in separate layers.
+                                // A hidden selected page must use ordinary content in both captures.
+                                // The publish lambda keeps its own native accent color.
+                                args[6] = args[7];
+                            }
+                            args[14] = ((Integer) args[14]) | 1;
+                            return chain.proceed(args);
+                        }
                         if (!installed || !(chain.getArg(1) instanceof MainPairs)) return chain.proceed();
                         MainPairs pairs = (MainPairs) chain.getArg(1);
                         Object[] args = new Object[18];
@@ -310,6 +325,32 @@ final class BottomNavigationHooks {
         return chain.proceed(args);
     }
 
+    /** 16.7.3 passes slot indices to a shared glass component and clamps its lens selection. */
+    private Object onGenericGlass(Chain chain, Runtime target) throws Throwable {
+        if (!installed || (hiddenSelection.get() == null && !(chain.getArg(1) instanceof MainSlots))) {
+            return chain.proceed();
+        }
+        Object[] args = new Object[18];
+        for (int i = 0; i < args.length; i++) args[i] = chain.getArg(i);
+        boolean hidden = args[1] instanceof MainSlots ? ((MainSlots) args[1]).selectionHidden
+                : Boolean.TRUE.equals(hiddenSelection.get());
+        if (!(args[1] instanceof MainSlots)) args[1] = new MainSlots((List<?>) args[1], hidden);
+        if (hidden) {
+            Object optics = target.styleOptics.get(args[6]);
+            Object[] coefficients = new Object[20];
+            for (int i = 0; i < coefficients.length; i++) coefficients[i] = target.opticalFields[i].getFloat(optics);
+            for (int index : new int[]{6, 7, 11, 12, 13, 14, 15, 17, 18, 19}) coefficients[index] = 0f;
+            Object colors = target.neutralSelectionColors(args[7]);
+            args[6] = target.styleConstructor.newInstance(target.opticalConstructor.newInstance(coefficients), colors);
+            args[7] = colors;
+            args[0] = -1;
+            args[17] = ((Integer) args[17]) & ~(64 | 128);
+        }
+        // Preserve remember slot order when the selected page becomes visible again.
+        args[15] = ((Integer) args[15]) & ~(0xE | 0x70 | 0x380000 | 0x1C00000);
+        return chain.proceed(args);
+    }
+
     private void rememberData(Object model, Runtime target) throws ReflectiveOperationException {
         Object flow = target.dataListGetter.invoke(model);
         Object value = target.getValue.invoke(flow);
@@ -419,11 +460,13 @@ final class BottomNavigationHooks {
         final Field[] opticalFields;
         final Field styleOptics, styleColors, navigationHeight, colorContainer, colorOverrides,
                 overrideBlur, overrideFallback, capabilityContainer;
-        final boolean legacy;
+        final boolean legacy, genericGlass;
         final long unspecifiedColor;
         Runtime(BottomNavigationTargetSpec spec, ClassLoader loader, Method renderer) throws ReflectiveOperationException {
             this.renderer = renderer;
             legacy = spec.legacy();
+            genericGlass = spec.genericGlass;
+            if (genericGlass && legacy) throw new NoSuchMethodException("generic glass top shape");
             barFields = new Field[legacy ? 7 : 8];
             opticalFields = new Field[legacy ? 10 : 20];
             Class<?> model = Class.forName(spec.viewModelClass, false, loader);
@@ -482,7 +525,8 @@ final class BottomNavigationHooks {
             for (int i = 0; i < barFields.length; i++) barFields[i] = field(barClass, fields[i], float.class);
             contentVisible = legacy ? null : field(contentColors, "\u037f", long.class);
             if (!legacy) field(contentColors, "\u0528", long.class);
-            glassRenderer = legacy ? renderer.getDeclaringClass().getDeclaredMethod(spec.glassRendererMethod,
+            glassRenderer = genericGlass ? exactStatic(spec.glassRendererOwner, spec.glassRendererMethod,
+                    spec.glassRendererParams, loader, void.class) : legacy ? renderer.getDeclaringClass().getDeclaredMethod(spec.glassRendererMethod,
                     List.class, int.class, List.class, int.class, Integer.class, postClass,
                     configClass, barClass, top[4], function, top[6], int.class)
                     : renderer.getDeclaringClass().getDeclaredMethod(spec.glassRendererMethod,
@@ -490,6 +534,16 @@ final class BottomNavigationHooks {
                     top[6], top[7], contentColors, barClass, top[4], top[9], function, top[11], int.class, int.class);
             if (!Modifier.isStatic(glassRenderer.getModifiers()) || glassRenderer.getReturnType() != void.class) {
                 throw new NoSuchMethodException("glass renderer shape");
+            }
+            if (genericGlass) {
+                Class<?>[] expected = {int.class, List.class, int.class, function, top[4], Integer.class,
+                        top[6], top[7], long.class, long.class, barClass, top[9],
+                        Class.forName("kotlin.jvm.functions.Function5", false, loader),
+                        Class.forName("kotlin.jvm.functions.Function6", false, loader), top[11],
+                        int.class, int.class, int.class};
+                if (!Arrays.equals(glassRenderer.getParameterTypes(), expected)) {
+                    throw new NoSuchMethodException("generic glass model contract");
+                }
             }
             Class<?> density = Class.forName("androidx.compose.ui.unit.Density", false, loader);
             densityGetter = density.getMethod("getDensity");
@@ -502,15 +556,28 @@ final class BottomNavigationHooks {
                     float.class, float.class, float.class, List.class, List.class, List.class);
             layoutConstructor.setAccessible(true);
             Class<?> box = Class.forName("androidx.compose.foundation.layout.BoxScope", false, loader);
-            slotsRenderer = legacy ? renderer.getDeclaringClass().getDeclaredMethod(spec.slotsMethod,
+            slotsRenderer = genericGlass ? exactStatic(spec.slotsOwner, spec.slotsMethod,
+                    spec.slotsParams, loader, Class.forName("kotlin.Unit", false, loader))
+                    : legacy ? renderer.getDeclaringClass().getDeclaredMethod(spec.slotsMethod,
                     box, List.class, layout, int.class, Integer.class, postClass, float.class, boolean.class,
                     int.class, int.class, configClass, long.class, function0, boolean.class, function, top[6], int.class, int.class)
                     : renderer.getDeclaringClass().getDeclaredMethod(spec.slotsMethod,
                     box, List.class,
                     layout, int.class, Integer.class, postClass, float.class, boolean.class, boolean.class,
                     int.class, long.class, long.class, function0, boolean.class, function, top[11], int.class, int.class);
-            if (!Modifier.isStatic(slotsRenderer.getModifiers()) || slotsRenderer.getReturnType() != void.class) {
+            if (!Modifier.isStatic(slotsRenderer.getModifiers()) || (!genericGlass && slotsRenderer.getReturnType() != void.class)) {
                 throw new NoSuchMethodException("slot renderer shape");
+            }
+            if (genericGlass) {
+                Class<?>[] expected = {int.class, List.class, int.class, Integer.class,
+                        Class.forName("kotlin.jvm.functions.Function5", false, loader),
+                        Class.forName("kotlin.jvm.functions.Function6", false, loader), long.class, long.class,
+                        box, layout, function,
+                        Class.forName("com.coolapk.market.widget.compose.liquid.LiquidGlassTabContentLayer", false, loader),
+                        function0, top[11], int.class};
+                if (!Arrays.equals(slotsRenderer.getParameterTypes(), expected)) {
+                    throw new NoSuchMethodException("generic slots model contract");
+                }
             }
             Class<?> styleClass = legacy ? panelParams[5] : top[6];
             Class<?> colorsClass = legacy ? panelParams[6] : top[7];
@@ -588,6 +655,22 @@ final class BottomNavigationHooks {
             if (field.getType() != type || Modifier.isStatic(field.getModifiers())) throw new NoSuchFieldException(name);
             field.setAccessible(true);
             return field;
+        }
+        private static Method exactStatic(String owner, String name, List<String> types,
+                                          ClassLoader loader, Class<?> returns) throws ReflectiveOperationException {
+            Class<?>[] parameters = new Class<?>[types.size()];
+            for (int i = 0; i < parameters.length; i++) {
+                String type = types.get(i);
+                parameters[i] = "int".equals(type) ? int.class : "long".equals(type) ? long.class
+                        : Class.forName(type, false, loader);
+            }
+            Method method = Class.forName(owner, false, loader).getDeclaredMethod(name, parameters);
+            if (method.getReturnType() != returns || !Modifier.isStatic(method.getModifiers())
+                    || Modifier.isAbstract(method.getModifiers()) || Modifier.isNative(method.getModifiers())) {
+                throw new NoSuchMethodException("generic glass exact method");
+            }
+            method.setAccessible(true);
+            return method;
         }
     }
 }

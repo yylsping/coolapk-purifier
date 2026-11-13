@@ -77,6 +77,10 @@ public final class PurifierConfigTest {
         assertEquals(0, config.hiddenBottomNavigationItems());
         assertFalse(config.isEnabled(PurifierConfig.Feature.SPLASH));
         assertTrue(config.isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
+        assertFalse(config.isEnabled(PurifierConfig.Feature.BLOCK_SELF_UPDATE));
+        assertTrue(config.setEnabled(PurifierConfig.Feature.BLOCK_SELF_UPDATE, true));
+        assertTrue(config().isEnabled(PurifierConfig.Feature.BLOCK_SELF_UPDATE));
+        assertTrue(config().isEnabled(PurifierConfig.Feature.DETAIL_SPONSOR));
     }
 
     @Test

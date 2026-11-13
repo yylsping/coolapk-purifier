@@ -25,7 +25,8 @@ final class PurifierConfig {
         SAME_TOPIC_FEED("remove_same_topic_feed", "去除同话题动态", false, true),
         DETAIL_SPONSOR("remove_detail_sponsor", "去除帖子内推广", false, true),
         SEARCH_HOT_WORDS("remove_search_hot_words", "去除热门搜索与热榜热词", false, true),
-        SEARCH_HOT_RANKINGS("remove_search_hot_rankings", "去除搜索页热榜", false, true);
+        SEARCH_HOT_RANKINGS("remove_search_hot_rankings", "去除搜索页热榜", false, true),
+        BLOCK_SELF_UPDATE("block_self_update", "屏蔽酷安更新", false, true);
 
         final String key;
         final String title;

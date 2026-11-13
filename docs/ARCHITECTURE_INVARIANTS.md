@@ -58,6 +58,9 @@ one-shot 且不自重排。
 - Gate 同时检查 manifest、生产源码、R8 DEX 和依赖；不能只依赖模块没有网络
   权限，因为注入代码具备宿主 UID 的能力。
 - 生产依赖仅允许 libxposed API、compileOnly Kotlin 标准库和 DexKit。
+- 2.9.0 的 `hostUpgrade` 目标用于拦截酷安自身的升级链路。仅检查酷安时
+  返回宿主 Rx 包装的本地成功空结果；混合列表透传其余应用。它不为模块增加
+  联网、下载、安装或后台能力，现有 gate 保持不变。
 
 ## Gate 用法
 

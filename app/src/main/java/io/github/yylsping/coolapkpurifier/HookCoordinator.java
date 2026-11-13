@@ -90,6 +90,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
     private final RelatedDataDelta relatedDataDelta;
     private final SearchHotWordsDelta searchHotWordsDelta;
     private final SearchHotRankingsDelta searchHotRankingsDelta;
+    private final HostUpgradeHooks hostUpgradeHooks;
     private final RecoveryController recoveryController;
     private final FirstAdaptationToast firstAdaptationToast;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -173,6 +174,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 module, log, featureGate, exposureLedger);
         this.searchHotRankingsDelta = new SearchHotRankingsDelta(
                 module, log, featureGate, exposureLedger);
+        this.hostUpgradeHooks = new HostUpgradeHooks(module, log, featureGate, hookLedger, exposureLedger);
         this.recoveryController = new RecoveryController(log, null, null);
         this.firstAdaptationToast = new FirstAdaptationToast(log);
     }
@@ -356,6 +358,7 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
                 : repository.profileStatus(hostVersion)));
         topology = new HookTopology(effectiveSnapshot(), profile != null);
         settingsHooks.setBottomNavigationSupported(profile != null && profile.bottomNavigation != null);
+        settingsHooks.setHostUpgradeSupported(profile != null && profile.hostUpgrade != null);
 
         installManifestFeatures(profile, context.getClassLoader());
         InstallResult navigationResult = bottomNavigationHooks.install(module, log, hookLedger,
@@ -461,6 +464,19 @@ final class HookCoordinator implements SplashHooks.ActivityObserver,
         installRelatedDataFeature(profile, loader);
         installSearchHotWordsFeature(profile, loader);
         installSearchHotRankingsFeature(profile, loader);
+        installHostUpgradeFeature(profile, loader);
+    }
+
+    private void installHostUpgradeFeature(TargetProfile profile, ClassLoader loader) {
+        PurifierConfig.Feature feature = PurifierConfig.Feature.BLOCK_SELF_UPDATE;
+        if (!topology.isEnabledAtStart(feature)) {
+            log.info("feature=" + feature.key + " source=manifest_exact install=DISABLED hookInstalled=false");
+            return;
+        }
+        if (manifestProfileMissing(feature)) return;
+        InstallResult result = hostUpgradeHooks.install(profile.hostUpgrade, loader);
+        topology.recordInstallResult(feature, result);
+        log.info("feature=" + feature.key + " source=manifest_exact install=" + result);
     }
 
     /**
